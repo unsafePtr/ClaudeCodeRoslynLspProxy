@@ -6,13 +6,16 @@
     <LangVersion>14</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>RoslynLspProxy</RootNamespace>
-    <AssemblyName>RoslynLspProxy</AssemblyName>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>ClaudeCodeRoslynLspProxy.Tests</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="RoslynLspProxy.Tests" />
+    <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ClaudeCodeRoslynLspProxy\ClaudeCodeRoslynLspProxy.csproj" />
   </ItemGroup>
 
 </Project>

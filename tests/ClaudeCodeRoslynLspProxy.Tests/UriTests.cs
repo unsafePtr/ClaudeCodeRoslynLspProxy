@@ -1,4 +1,4 @@
-namespace RoslynLspProxy.Tests;
+namespace ClaudeCodeRoslynLspProxy.Tests;
 
 public class UriTests
 {

@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace RoslynLspProxy;
+namespace ClaudeCodeRoslynLspProxy;
 
 // Thin LSP proxy between an LSP client (Claude Code) and Microsoft.CodeAnalysis.LanguageServer.
 //
