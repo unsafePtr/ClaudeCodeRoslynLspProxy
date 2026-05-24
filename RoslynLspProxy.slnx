@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/RoslynLspProxy/RoslynLspProxy.csproj" />
+  <Project Path="tests/RoslynLspProxy.Tests/RoslynLspProxy.Tests.csproj" />
+</Solution>
