@@ -2,6 +2,8 @@
 
 A thin LSP proxy that makes Microsoft's **Roslyn Language Server** (`Microsoft.CodeAnalysis.LanguageServer`) work as a solution-aware C# language server inside **Claude Code** by injecting the Roslyn-specific `solution/open` notification that Claude Code's built-in LSP client does not send.
 
+> ⚠️ **Claude Code's LSP tool is read-only / navigation-only.** It exposes 9 query operations (`findReferences`, `goToDefinition`, `goToImplementation`, `hover`, `documentSymbol`, `prepareCallHierarchy`, `incomingCalls`, `outgoingCalls`, `workspaceSymbol`) and does **not** expose any LSP edit operations — no `rename`, `codeAction`, or `formatting`, even though `roslyn-language-server` implements them server-side. This proxy enables the read-only operations to work solution-wide; it cannot add edit capabilities Claude Code does not surface. See [Limitations](#limitations).
+
 ## The problem
 
 Claude Code supports LSP servers via plugins ([official docs](https://code.claude.com/docs/en/plugins-reference#lsp-servers)). When you point a plugin at `roslyn-language-server` directly, hover and per-document semantic info work — but cross-file operations like `findReferences` return file-scoped or empty results until you've manually opened other files in the workspace.
@@ -79,7 +81,7 @@ This is Microsoft's official `Microsoft.CodeAnalysis.LanguageServer` packaged as
 ### 2. Build the proxy
 
 ```pwsh
-git clone https://github.com/<you>/ClaudeCodeRoslynLspProxy
+git clone https://github.com/unsafePtr/ClaudeCodeRoslynLspProxy
 cd ClaudeCodeRoslynLspProxy
 dotnet publish src/ClaudeCodeRoslynLspProxy/ClaudeCodeRoslynLspProxy.csproj -c Release -o dist
 ```
