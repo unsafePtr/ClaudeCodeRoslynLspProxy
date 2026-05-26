@@ -8,6 +8,8 @@ A thin LSP proxy that makes Microsoft's **Roslyn Language Server** (`Microsoft.C
 
 > ⚠️ **Claude Code's LSP tool is read-only / navigation-only.** It exposes 9 query operations (`findReferences`, `goToDefinition`, `goToImplementation`, `hover`, `documentSymbol`, `prepareCallHierarchy`, `incomingCalls`, `outgoingCalls`, `workspaceSymbol`) and does **not** expose edit operations like `rename`, `codeAction`, or `formatting` — even though `roslyn-language-server` implements them server-side. This proxy makes the read-only operations work solution-wide; it cannot add capabilities Claude Code does not surface.
 
+![Solution-wide findReferences and goToImplementation in Claude Code, with this proxy active](docs/screenshots/lsp-in-action.png)
+
 ## How it works
 
 ```
