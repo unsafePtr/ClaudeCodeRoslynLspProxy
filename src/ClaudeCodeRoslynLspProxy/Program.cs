@@ -557,29 +557,28 @@ internal static class Program
 
     internal static async Task WriteFrameAsync(Stream sink, ReadOnlyMemory<byte> body, CancellationToken ct)
     {
-        // "Content-Length: " (16) + up to 10 digits + "\r\n\r\n" (4) — 32 is plenty.
-        var header = ArrayPool<byte>.Shared.Rent(32);
-        try
+        // LSP framing is ASCII, identical on every OS: "Content-Length: " (16) +
+        // up to 10 digits + "\r\n\r\n" (4) — 32 bytes is plenty. Stack-allocate so
+        // there's no heap traffic for the header at all.
+        Span<byte> header = stackalloc byte[32];
+        ReadOnlySpan<byte> prefix = "Content-Length: "u8;
+        prefix.CopyTo(header);
+        if (!Utf8Formatter.TryFormat(body.Length, header.Slice(prefix.Length), out var written))
         {
-            ReadOnlySpan<byte> prefix = "Content-Length: "u8;
-            prefix.CopyTo(header);
-            if (!Utf8Formatter.TryFormat(body.Length, header.AsSpan(prefix.Length), out var written))
-            {
-                throw new InvalidOperationException("failed to format Content-Length");
-            }
-            var p = prefix.Length + written;
-            header[p++] = (byte)'\r';
-            header[p++] = (byte)'\n';
-            header[p++] = (byte)'\r';
-            header[p++] = (byte)'\n';
-            await sink.WriteAsync(header.AsMemory(0, p), ct);
-            await sink.WriteAsync(body, ct);
-            await sink.FlushAsync(ct);
+            throw new InvalidOperationException("failed to format Content-Length");
         }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(header);
-        }
+        var p = prefix.Length + written;
+        header[p++] = (byte)'\r';
+        header[p++] = (byte)'\n';
+        header[p++] = (byte)'\r';
+        header[p++] = (byte)'\n';
+
+        // Header bytes go out via a sync Write — Span<byte> from stackalloc can't
+        // survive an await, and writing ≤30 ASCII bytes to a pipe is effectively
+        // instantaneous. The body and flush use the cancellable async path.
+        sink.Write(header.Slice(0, p));
+        await sink.WriteAsync(body, ct);
+        await sink.FlushAsync(ct);
     }
 
     internal static Task WriteFrameAsync(Stream sink, byte[] body, CancellationToken ct)
