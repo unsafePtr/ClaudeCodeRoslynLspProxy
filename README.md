@@ -24,25 +24,46 @@ Roslyn LSP needs this Microsoft-specific notification to load the workspace as a
 
 ## Installation
 
-**Prereqs:** .NET 10 SDK; Claude Code 2.1.50+; `ENABLE_LSP_TOOL=1` in `~/.claude/settings.json` `env` block (Claude Code's LSP tool is currently gated behind this undocumented env var).
+### 🚀 Plugin - Claude Code
 
-```pwsh
-dotnet tool install --global roslyn-language-server --prerelease
-dotnet tool install --global ClaudeCodeRoslynLspProxy
-claude plugin marketplace add unsafePtr/ClaudeCodeRoslynLspProxy
-claude plugin install roslyn-lsp@claude-roslyn-lsp
-```
+Prereqs: .NET 10 SDK; Claude Code 2.1.50+; `ENABLE_LSP_TOOL=1` in your `~/.claude/settings.json` `env` block (the LSP tool is currently gated behind this undocumented env var).
 
-`roslyn-language-server` is Microsoft's official `Microsoft.CodeAnalysis.LanguageServer` (owned by `Microsoft` / `RoslynTeam` on NuGet, source at [dotnet/roslyn](https://github.com/dotnet/roslyn)). Microsoft only publishes pre-release versions, so `--prerelease` is required.
+1. Install the two `dotnet` tools (both end up on PATH via `~/.dotnet/tools` on Windows, Linux, macOS):
+   ```pwsh
+   dotnet tool install --global roslyn-language-server --prerelease
+   dotnet tool install --global ClaudeCodeRoslynLspProxy
+   ```
+   `roslyn-language-server` is Microsoft's official `Microsoft.CodeAnalysis.LanguageServer` (owners `Microsoft` / `RoslynTeam` on NuGet; source [dotnet/roslyn](https://github.com/dotnet/roslyn)). Microsoft only ships pre-release versions, so `--prerelease` is required.
 
-Restart Claude Code. The plugin will prompt for two config values at enable time (defaults are sensible):
+2. Launch Claude Code.
 
-| Field | Default | Allowed |
-|---|---|---|
-| `telemetry_level` | `off` | `off` / `error` / `crash` / `all` — forwarded to `--telemetryLevel`. `off` sends nothing to Microsoft. |
-| `log_level` | `Information` | `Trace` / `Debug` / `Information` / `Warning` / `Error` / `Critical` — set `Trace` when filing a bug. |
+3. Add the marketplace:
+   ```
+   /plugin marketplace add unsafePtr/ClaudeCodeRoslynLspProxy
+   ```
 
-Change later with `claude plugin configure roslyn-lsp`. Update everything with `dotnet tool update --global …` + `claude plugin update roslyn-lsp`.
+4. Install the plugin:
+   ```
+   /plugin install roslyn-lsp@claude-roslyn-lsp
+   ```
+
+5. Restart Claude Code to load the plugin. At enable time you'll be prompted for two values (defaults are sensible — just accept them):
+
+   | Field | Default | Allowed |
+   |---|---|---|
+   | `telemetry_level` | `off` | `off` / `error` / `crash` / `all` — forwarded to `--telemetryLevel`. `off` sends nothing to Microsoft. |
+   | `log_level` | `Information` | `Trace` / `Debug` / `Information` / `Warning` / `Error` / `Critical` — set `Trace` when filing a bug. |
+
+6. Verify with `/plugin` — `roslyn-lsp@claude-roslyn-lsp` should be listed as enabled.
+
+7. Update later (on demand):
+   ```pwsh
+   dotnet tool update --global roslyn-language-server --prerelease
+   dotnet tool update --global ClaudeCodeRoslynLspProxy
+   ```
+   ```
+   /plugin update roslyn-lsp@claude-roslyn-lsp
+   ```
 
 ### Verify
 
