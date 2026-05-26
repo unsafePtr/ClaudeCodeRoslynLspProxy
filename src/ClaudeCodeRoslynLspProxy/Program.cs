@@ -279,6 +279,9 @@ internal static class Program
     static int ParseContentLength(ReadOnlySequence<byte> headers)
     {
         ReadOnlySpan<byte> tag = "Content-Length:"u8;
+        // Hoist out of the loop — stackalloc inside a tight loop can grow the stack
+        // frame per iteration under some JITs. One slot, reused.
+        Span<byte> lineStack = stackalloc byte[128];
         var r = new SequenceReader<byte>(headers);
 
         while (!r.End)
@@ -290,13 +293,12 @@ internal static class Program
                 r.AdvanceToEnd();
             }
 
-            Span<byte> stack = stackalloc byte[128];
-            if (line.Length > stack.Length)
+            if (line.Length > lineStack.Length)
             {
                 continue;
             }
-            line.CopyTo(stack);
-            var ls = stack.Slice(0, (int)line.Length);
+            line.CopyTo(lineStack);
+            var ls = lineStack.Slice(0, (int)line.Length);
 
             if (ls.Length > tag.Length && StartsWithCaseInsensitive(ls, tag))
             {
