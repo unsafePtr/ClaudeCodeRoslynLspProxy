@@ -1,5 +1,7 @@
 # ClaudeCodeRoslynLspProxy
 
+> 🤝 Built with the help of Claude — roughly 50% Claude's contribution, 50% vibe-coded.
+
 A thin LSP proxy that makes Microsoft's **Roslyn Language Server** (`Microsoft.CodeAnalysis.LanguageServer`) work as a solution-aware C# language server inside **Claude Code** by injecting the Roslyn-specific `solution/open` notification that Claude Code's built-in LSP client does not send.
 
 > ⚠️ **Claude Code's LSP tool is read-only / navigation-only.** It exposes 9 query operations (`findReferences`, `goToDefinition`, `goToImplementation`, `hover`, `documentSymbol`, `prepareCallHierarchy`, `incomingCalls`, `outgoingCalls`, `workspaceSymbol`) and does **not** expose any LSP edit operations — no `rename`, `codeAction`, or `formatting`, even though `roslyn-language-server` implements them server-side. This proxy enables the read-only operations to work solution-wide; it cannot add edit capabilities Claude Code does not surface. See [Limitations](#limitations).
@@ -156,7 +158,34 @@ claude-roslyn-lsp/
 }
 ```
 
-**`roslyn-lsp/.lsp.json`** — same `csharp` block as in `marketplace.json`'s `lspServers`.
+**`roslyn-lsp/.lsp.json`** — same `csharp` block as in `marketplace.json`'s `lspServers`, but **without** the outer `lspServers` wrapper (this is where the schema differs from `plugin.json` inline form):
+
+```json
+{
+  "csharp": {
+    "command": "C:/path/to/ClaudeCodeRoslynLspProxy/dist/ClaudeCodeRoslynLspProxy.exe",
+    "args": [
+      "--server", "C:/Users/USER/.dotnet/tools/roslyn-language-server.cmd",
+      "--log", "C:/Users/USER/AppData/Local/Temp/roslyn-lsp-logs/proxy.log",
+      "--",
+      "--stdio",
+      "--autoLoadProjects",
+      "--logLevel", "Information",
+      "--extensionLogDirectory", "C:/Users/USER/AppData/Local/Temp/roslyn-lsp-logs"
+    ],
+    "transport": "stdio",
+    "extensionToLanguage": {
+      ".cs": "csharp",
+      ".csx": "csharp",
+      ".cshtml": "csharp"
+    },
+    "startupTimeout": 120000,
+    "maxRestarts": 3
+  }
+}
+```
+
+> ⚠️ A common mistake is to copy the `marketplace.json` block verbatim and end up with `{ "lspServers": { "csharp": { ... } } }` in `.lsp.json` — that fails validation. In `.lsp.json` the language name (`csharp`) is the top-level key. The `lspServers` wrapper is only used when defining LSP servers **inline in `plugin.json`**.
 
 ### 4. Enable the LSP tool in Claude Code
 
@@ -198,6 +227,32 @@ Expected output ends with:
 ```
 
 The first LSP call after a fresh Claude Code start will take **10-30 seconds** while Roslyn loads the solution. Subsequent calls are sub-second.
+
+## Troubleshooting
+
+**Plugin shows `LSP servers (1) csharp` but the proxy never runs.**
+Claude Code launches LSP servers **lazily**. The proxy only spawns when:
+- the LSP tool is explicitly invoked (e.g. you ask Claude to "find references to X"), or
+- a file matching `extensionToLanguage` (`.cs`, `.csx`, `.cshtml`) is opened in the session.
+
+Until then, no `Microsoft.CodeAnalysis.LanguageServer` or `ClaudeCodeRoslynLspProxy` process exists and `proxy.log` won't get a new entry. If you've never triggered either, that's normal.
+
+**Schema validation error on `.lsp.json` (`Unrecognized key: "csharp"` or `expected string, received undefined`).**
+You wrote `{ "lspServers": { "csharp": { ... } } }` — that's the `plugin.json` inline shape. In `.lsp.json` drop the `lspServers` wrapper; see step 3 above.
+
+**`findReferences` returns 0–1 results on a large solution.**
+Roslyn indexes the workspace in the background. On a ~200+ project solution the first call after `solution/open` can run before indexing completes and return partial results. Wait 10–60 seconds and retry — subsequent calls hit the warm graph and return full cross-project results.
+
+**Proxy started but `solution/open` was not sent.**
+Check `proxy.log` — the last entry should be one of:
+- `solution/open (file:///.../*.slnx)` — solution discovered and opened
+- `project/open (N projects)` — no `.slnx`/`.sln` found, fell back to `.csproj` discovery
+- `(none — transparent pipe)` — no `.slnx`/`.sln`/`.csproj` found under the workspace folder; the proxy is a passthrough and the server runs in per-document mode
+
+If you expected solution mode but got `project/open` or `(none)`, the workspace folder Claude Code reported in `initialize` doesn't contain your solution file. Use `--solution <path>` to force-open a specific file, or open Claude Code at the directory containing your `.slnx`/`.sln`.
+
+**Updating the proxy binary.**
+The LSP plugin loader caches the resolved command path at process start. Rebuild to `dist/`, then fully restart Claude Code (not `/reload-plugins` — that doesn't respawn already-running LSP processes).
 
 ## CLI reference
 
