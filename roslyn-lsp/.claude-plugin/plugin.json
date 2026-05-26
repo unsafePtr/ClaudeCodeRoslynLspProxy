@@ -1,22 +1,8 @@
 {
   "name": "roslyn-lsp",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "Solution-aware Microsoft Roslyn LSP via ClaudeCodeRoslynLspProxy",
   "author": { "name": "unsafePtr", "url": "https://github.com/unsafePtr" },
   "homepage": "https://github.com/unsafePtr/ClaudeCodeRoslynLspProxy",
-  "license": "MIT",
-  "userConfig": {
-    "telemetry_level": {
-      "type": "string",
-      "title": "Roslyn telemetry level",
-      "description": "Forwarded to Microsoft.CodeAnalysis.LanguageServer as --telemetryLevel. Allowed: off | error | crash | all. Defaults to 'off' so nothing is sent to Microsoft unless you opt in.",
-      "default": "off"
-    },
-    "log_level": {
-      "type": "string",
-      "title": "Roslyn log level",
-      "description": "Forwarded to Microsoft.CodeAnalysis.LanguageServer as --logLevel. Allowed: Trace | Debug | Information | Warning | Error | Critical. Defaults to 'Information'.",
-      "default": "Information"
-    }
-  }
+  "license": "MIT"
 }

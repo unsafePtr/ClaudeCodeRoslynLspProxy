@@ -6,8 +6,7 @@
       "--",
       "--stdio",
       "--autoLoadProjects",
-      "--telemetryLevel", "${user_config.telemetry_level}",
-      "--logLevel", "${user_config.log_level}"
+      "--logLevel", "Information"
     ],
     "transport": "stdio",
     "extensionToLanguage": {
