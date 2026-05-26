@@ -604,7 +604,7 @@ internal static class Program
     // each — a PipeReader wrapper can't be substituted here because it buffers
     // ahead and a fresh PipeReader per call would lose those buffered bytes between
     // calls. The hot-path PumpAsync uses Pipelines directly.
-    internal static async Task<byte[]?> ReadFrameAsync(Stream source, CancellationToken ct)
+    internal static async ValueTask<byte[]?> ReadFrameAsync(Stream source, CancellationToken ct)
     {
         var oneByte = new byte[1];
         var lineBuf = new byte[64];
