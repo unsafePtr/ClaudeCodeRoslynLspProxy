@@ -77,6 +77,9 @@ internal static class Program
             return 2;
         }
 
+        serverPath = ResolveServerPath(serverPath);
+        logPath ??= DefaultLogPath();
+
         await using var log = OpenLog(logPath);
         log?.WriteLine($"[proxy] start server={serverPath} args=[{string.Join(' ', serverArgs)}]");
         await (log?.FlushAsync() ?? Task.CompletedTask);
@@ -439,6 +442,65 @@ internal static class Program
             return null;
         }
         return parsed.LocalPath;
+    }
+
+    // On Windows `dotnet tool install` creates a `.cmd` shim alongside the tool name;
+    // Process.Start with UseShellExecute=false does NOT search PATHEXT, so a bare
+    // `roslyn-language-server` argument fails. Probe the configured value first, then
+    // try `.cmd` and `.exe` if needed. Bare name is also resolved against PATH.
+    internal static string ResolveServerPath(string path)
+    {
+        if (File.Exists(path))
+        {
+            return path;
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            foreach (var ext in new[] { ".cmd", ".exe", ".bat" })
+            {
+                if (File.Exists(path + ext))
+                {
+                    return path + ext;
+                }
+            }
+        }
+
+        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (pathEnv is null || Path.IsPathRooted(path))
+        {
+            return path;
+        }
+
+        foreach (var dir in pathEnv.Split(Path.PathSeparator))
+        {
+            if (string.IsNullOrEmpty(dir))
+            {
+                continue;
+            }
+            var candidate = Path.Combine(dir, path);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+            if (OperatingSystem.IsWindows())
+            {
+                foreach (var ext in new[] { ".cmd", ".exe", ".bat" })
+                {
+                    if (File.Exists(candidate + ext))
+                    {
+                        return candidate + ext;
+                    }
+                }
+            }
+        }
+
+        return path;
+    }
+
+    internal static string DefaultLogPath()
+    {
+        return Path.Combine(Path.GetTempPath(), "roslyn-lsp-logs", "proxy.log");
     }
 
     internal static StreamWriter? OpenLog(string? path)

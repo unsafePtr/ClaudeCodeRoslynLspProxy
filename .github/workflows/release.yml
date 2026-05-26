@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    name: publish to NuGet
+    runs-on: ubuntu-latest
+    environment: nuget
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Pack
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          dotnet pack src/ClaudeCodeRoslynLspProxy/ClaudeCodeRoslynLspProxy.csproj \
+            -c Release -p:Version="$VERSION" -o ./artifacts
+
+      # NuGet Trusted Publishing — configure once at nuget.org under the package's
+      # "Trusted Publishing" tab, then no API key is needed. Until then this step
+      # will fail; you can fall back to a NUGET_API_KEY secret meanwhile.
+      - name: Login to NuGet (trusted publishing)
+        uses: NuGet/login@v1
+        id: login
+        continue-on-error: true
+        with:
+          user: ${{ github.repository_owner }}
+
+      - name: Push
+        if: steps.login.outcome == 'success'
+        run: |
+          dotnet nuget push ./artifacts/*.nupkg \
+            --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate

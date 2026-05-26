@@ -72,122 +72,28 @@ For semantic rename, move-member, and similar edit operations on C# code today, 
 - .NET 10 SDK or later (`dotnet --list-sdks`)
 - Claude Code 2.1.50+ (`claude --version`)
 
-### 1. Install the Roslyn Language Server
+### 1. Install the two `dotnet` tools
 
 ```pwsh
 dotnet tool install --global roslyn-language-server --prerelease
+dotnet tool install --global ClaudeCodeRoslynLspProxy
 ```
 
-This is Microsoft's official `Microsoft.CodeAnalysis.LanguageServer` packaged as a dotnet tool (owners on NuGet: `Microsoft`, `RoslynTeam`). Installs to `~/.dotnet/tools/roslyn-language-server[.cmd]`.
+`roslyn-language-server` is Microsoft's official `Microsoft.CodeAnalysis.LanguageServer` — owned by `Microsoft` / `RoslynTeam` on NuGet, source at [dotnet/roslyn](https://github.com/dotnet/roslyn), and the same engine that powers VS Code's C# Dev Kit and Rider. Microsoft only publishes **pre-release** versions of this tool, so `--prerelease` is required; without it, `dotnet tool install` reports no matching version.
 
-### 2. Build the proxy
+`ClaudeCodeRoslynLspProxy` is this proxy, published from this repo.
+
+Both end up on `PATH` (via `~/.dotnet/tools`) on Windows, Linux, and macOS.
+
+To update later:
 
 ```pwsh
-git clone https://github.com/unsafePtr/ClaudeCodeRoslynLspProxy
-cd ClaudeCodeRoslynLspProxy
-dotnet publish src/ClaudeCodeRoslynLspProxy/ClaudeCodeRoslynLspProxy.csproj -c Release -o dist
+dotnet tool update --global roslyn-language-server --prerelease
+dotnet tool update --global ClaudeCodeRoslynLspProxy
+claude plugin update roslyn-lsp
 ```
 
-Produces `dist/ClaudeCodeRoslynLspProxy.exe` (~160 KB, framework-dependent).
-
-### 3. Create a Claude Code local plugin
-
-Anywhere on disk, create a directory with this layout (forward slashes in JSON paths, even on Windows — the LSP plugin loader expects them):
-
-```
-claude-roslyn-lsp/
-├── .claude-plugin/
-│   └── marketplace.json
-└── roslyn-lsp/
-    ├── plugin.json
-    └── .lsp.json
-```
-
-**`.claude-plugin/marketplace.json`** — replace paths with your absolute paths:
-
-```json
-{
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "local-roslyn-lsp",
-  "version": "0.1.0",
-  "description": "Roslyn LSP for Claude Code with solution/open injection",
-  "owner": { "name": "local" },
-  "plugins": [
-    {
-      "name": "roslyn-lsp",
-      "version": "0.1.0",
-      "source": "./roslyn-lsp",
-      "category": "development",
-      "tags": ["csharp", "dotnet", "lsp", "roslyn"],
-      "lspServers": {
-        "csharp": {
-          "command": "C:/path/to/ClaudeCodeRoslynLspProxy/dist/ClaudeCodeRoslynLspProxy.exe",
-          "args": [
-            "--server", "C:/Users/USER/.dotnet/tools/roslyn-language-server.cmd",
-            "--log", "C:/Users/USER/AppData/Local/Temp/roslyn-lsp-logs/proxy.log",
-            "--",
-            "--stdio",
-            "--autoLoadProjects",
-            "--logLevel", "Information",
-            "--extensionLogDirectory", "C:/Users/USER/AppData/Local/Temp/roslyn-lsp-logs"
-          ],
-          "transport": "stdio",
-          "extensionToLanguage": {
-            ".cs": "csharp",
-            ".csx": "csharp",
-            ".cshtml": "csharp"
-          },
-          "startupTimeout": 120000,
-          "maxRestarts": 3
-        }
-      }
-    }
-  ]
-}
-```
-
-**`roslyn-lsp/plugin.json`**
-
-```json
-{
-  "name": "roslyn-lsp",
-  "version": "0.1.0",
-  "description": "Roslyn LSP via ClaudeCodeRoslynLspProxy",
-  "author": { "name": "local" },
-  "license": "MIT"
-}
-```
-
-**`roslyn-lsp/.lsp.json`** — same `csharp` block as in `marketplace.json`'s `lspServers`, but **without** the outer `lspServers` wrapper (this is where the schema differs from `plugin.json` inline form):
-
-```json
-{
-  "csharp": {
-    "command": "C:/path/to/ClaudeCodeRoslynLspProxy/dist/ClaudeCodeRoslynLspProxy.exe",
-    "args": [
-      "--server", "C:/Users/USER/.dotnet/tools/roslyn-language-server.cmd",
-      "--log", "C:/Users/USER/AppData/Local/Temp/roslyn-lsp-logs/proxy.log",
-      "--",
-      "--stdio",
-      "--autoLoadProjects",
-      "--logLevel", "Information",
-      "--extensionLogDirectory", "C:/Users/USER/AppData/Local/Temp/roslyn-lsp-logs"
-    ],
-    "transport": "stdio",
-    "extensionToLanguage": {
-      ".cs": "csharp",
-      ".csx": "csharp",
-      ".cshtml": "csharp"
-    },
-    "startupTimeout": 120000,
-    "maxRestarts": 3
-  }
-}
-```
-
-> ⚠️ A common mistake is to copy the `marketplace.json` block verbatim and end up with `{ "lspServers": { "csharp": { ... } } }` in `.lsp.json` — that fails validation. In `.lsp.json` the language name (`csharp`) is the top-level key. The `lspServers` wrapper is only used when defining LSP servers **inline in `plugin.json`**.
-
-### 4. Enable the LSP tool in Claude Code
+### 2. Enable the LSP tool in Claude Code
 
 Add `ENABLE_LSP_TOOL=1` to your `~/.claude/settings.json` `env` block (merging with existing keys):
 
@@ -199,25 +105,40 @@ Add `ENABLE_LSP_TOOL=1` to your `~/.claude/settings.json` `env` block (merging w
 }
 ```
 
-### 5. Register & install
+### 3. Install the Claude Code plugin
 
 ```pwsh
-claude plugin marketplace add C:/path/to/claude-roslyn-lsp
-claude plugin install roslyn-lsp@local-roslyn-lsp
+claude plugin marketplace add unsafePtr/ClaudeCodeRoslynLspProxy
+claude plugin install roslyn-lsp@claudecoderoslynlspproxy
 ```
 
-Restart Claude Code. Verify with `claude plugin list` — `roslyn-lsp@local-roslyn-lsp` should be enabled.
+Restart Claude Code. Verify with `claude plugin list` — `roslyn-lsp@claudecoderoslynlspproxy` should be enabled.
 
-### 6. Verify end-to-end
+At enable time the plugin will prompt for two user-config values (both have sensible defaults — just accept them unless you want to change):
+
+| Field | Default | Allowed values |
+|---|---|---|
+| `telemetry_level` | `off` | `off` / `error` / `crash` / `all` — forwarded to roslyn-language-server's `--telemetryLevel`. `off` sends nothing to Microsoft. |
+| `log_level` | `Information` | `Trace` / `Debug` / `Information` / `Warning` / `Error` / `Critical` — forwarded to roslyn-language-server's `--logLevel`. Crank to `Trace` when filing a bug. |
+
+You can change them later with `claude plugin configure roslyn-lsp`.
+
+The plugin's [`roslyn-lsp/.lsp.json`](./roslyn-lsp/.lsp.json) invokes `ClaudeCodeRoslynLspProxy` and `roslyn-language-server` by bare name; the proxy resolves the right executable extension on each OS automatically (`.cmd` on Windows, no extension on Linux/macOS).
+
+### 4. Verify end-to-end
 
 In a fresh Claude Code session inside a C# project, ask Claude:
 
 > Use the LSP tool to find all references to a class in this solution.
 
-Then check the proxy log:
+Then check the proxy log (defaults to `<temp>/roslyn-lsp-logs/proxy.log`):
 
 ```pwsh
-Get-Content $env:LOCALAPPDATA\Temp\roslyn-lsp-logs\proxy.log -Tail 5
+# Windows
+Get-Content $env:TEMP\roslyn-lsp-logs\proxy.log -Tail 5
+
+# Linux / macOS
+tail -5 /tmp/roslyn-lsp-logs/proxy.log
 ```
 
 Expected output ends with:
@@ -226,7 +147,23 @@ Expected output ends with:
 [proxy] open notification sent: solution/open (file:///.../YourSolution.slnx)
 ```
 
-The first LSP call after a fresh Claude Code start will take **10-30 seconds** while Roslyn loads the solution. Subsequent calls are sub-second.
+The first LSP call after a fresh Claude Code start will take **10–30 seconds** while Roslyn loads the solution. Subsequent calls are sub-second.
+
+### Building from source (development)
+
+```pwsh
+git clone https://github.com/unsafePtr/ClaudeCodeRoslynLspProxy
+cd ClaudeCodeRoslynLspProxy
+dotnet pack src/ClaudeCodeRoslynLspProxy/ClaudeCodeRoslynLspProxy.csproj -c Release -o ./artifacts
+dotnet tool install --global --add-source ./artifacts ClaudeCodeRoslynLspProxy
+```
+
+To work on the plugin manifests locally without going through NuGet, install the plugin from a local clone instead:
+
+```pwsh
+claude plugin marketplace add C:/path/to/ClaudeCodeRoslynLspProxy
+claude plugin install roslyn-lsp@claudecoderoslynlspproxy
+```
 
 ## Troubleshooting
 
