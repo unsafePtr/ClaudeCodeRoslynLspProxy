@@ -35,8 +35,11 @@ public class EndToEndTests : IDisposable
     [Fact]
     public async Task SolutionOpenInjected_AfterInitialized_WithDiscoveredSlnx()
     {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(15));
+
         var slnxPath = Path.Combine(_tempDir, "TestSolution.slnx");
-        await File.WriteAllTextAsync(slnxPath, "<Solution />");
+        await File.WriteAllTextAsync(slnxPath, "<Solution />", cts.Token);
 
         var workspaceUri = new Uri(_tempDir).AbsoluteUri;
 
@@ -47,8 +50,6 @@ public class EndToEndTests : IDisposable
         var proxyToServer = new Pipe();
         var serverToProxy = new Pipe();
         var proxyToClient = new Pipe();
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
         var state = new Program.ProxyState();
 
@@ -117,8 +118,11 @@ public class EndToEndTests : IDisposable
     [Fact]
     public async Task ProjectOpenInjected_WhenNoSolutionFound_ButCsprojExists()
     {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(15));
+
         var csprojPath = Path.Combine(_tempDir, "Loose.csproj");
-        await File.WriteAllTextAsync(csprojPath, "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        await File.WriteAllTextAsync(csprojPath, "<Project Sdk=\"Microsoft.NET.Sdk\" />", cts.Token);
 
         var workspaceUri = new Uri(_tempDir).AbsoluteUri;
 
@@ -126,8 +130,6 @@ public class EndToEndTests : IDisposable
         var proxyToServer = new Pipe();
         var serverToProxy = new Pipe();
         var proxyToClient = new Pipe();
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
         var state = new Program.ProxyState();
 

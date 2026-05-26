@@ -23,34 +23,34 @@ public class ServerPathTests : IDisposable
     }
 
     [Fact]
-    public void ReturnsPath_WhenFileExists()
+    public async Task ReturnsPath_WhenFileExists()
     {
         var f = Path.Combine(_tempDir, "exists.bin");
-        File.WriteAllText(f, "");
+        await File.WriteAllTextAsync(f, "", TestContext.Current.CancellationToken);
         Assert.Equal(f, Program.ResolveServerPath(f));
     }
 
     [Fact]
-    public void ReturnsCmdSuffix_OnWindows_WhenBareNameNotFound()
+    public async Task ReturnsCmdSuffix_OnWindows_WhenBareNameNotFound()
     {
         if (!OperatingSystem.IsWindows())
         {
             return;
         }
         var bare = Path.Combine(_tempDir, "tool");
-        File.WriteAllText(bare + ".cmd", "");
+        await File.WriteAllTextAsync(bare + ".cmd", "", TestContext.Current.CancellationToken);
         Assert.Equal(bare + ".cmd", Program.ResolveServerPath(bare));
     }
 
     [Fact]
-    public void ReturnsExeSuffix_OnWindows_WhenCmdMissing()
+    public async Task ReturnsExeSuffix_OnWindows_WhenCmdMissing()
     {
         if (!OperatingSystem.IsWindows())
         {
             return;
         }
         var bare = Path.Combine(_tempDir, "tool2");
-        File.WriteAllText(bare + ".exe", "");
+        await File.WriteAllTextAsync(bare + ".exe", "", TestContext.Current.CancellationToken);
         Assert.Equal(bare + ".exe", Program.ResolveServerPath(bare));
     }
 
