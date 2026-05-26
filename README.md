@@ -1,5 +1,9 @@
 # ClaudeCodeRoslynLspProxy
 
+[![NuGet](https://img.shields.io/nuget/v/ClaudeCodeRoslynLspProxy.svg?logo=nuget)](https://www.nuget.org/packages/ClaudeCodeRoslynLspProxy)
+[![CI](https://github.com/unsafePtr/ClaudeCodeRoslynLspProxy/actions/workflows/ci.yml/badge.svg)](https://github.com/unsafePtr/ClaudeCodeRoslynLspProxy/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 > 🤝 Built with the help of Claude — roughly 50% Claude's contribution, 50% vibe-coded.
 
 A thin LSP proxy that makes Microsoft's **Roslyn Language Server** (`Microsoft.CodeAnalysis.LanguageServer`) work as a solution-aware C# language server inside **Claude Code** by injecting the Roslyn-specific `solution/open` notification that Claude Code's built-in LSP client does not send.
