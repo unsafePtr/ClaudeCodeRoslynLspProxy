@@ -125,8 +125,7 @@ internal static class LspFraming
 
     internal static async ValueTask WriteFrameAsync(PipeWriter writer, ReadOnlySequence<byte> body, CancellationToken ct)
     {
-        // Header: "Content-Length: " (16) + up to 10 digits + "\r\n\r\n" (4) = 30 bytes max.
-        // Format directly into the writer's pooled buffer — no stackalloc temp, no CopyTo.
+        // "Content-Length: " (16) + up to 10 digits + "\r\n\r\n" (4) = 30 bytes max → GetSpan(32).
         ReadOnlySpan<byte> prefix = "Content-Length: "u8;
         var span = writer.GetSpan(32);
         prefix.CopyTo(span);
@@ -151,12 +150,8 @@ internal static class LspFraming
 
     internal static async ValueTask WriteFrameAsync(Stream sink, ReadOnlyMemory<byte> body, CancellationToken ct)
     {
-        // LSP framing is ASCII, identical on every OS. "Content-Length: " and
-        // "\r\n\r\n" are u8 literals (no allocation); only the digit run needs
-        // a stack slot (int32 max = 10 decimal digits). Three sync writes — the
-        // OS pipe buffer coalesces them; we save the 32-byte temp + the CopyTo.
-        // Sync Write is used because Span<byte> can't survive an await; <30 bytes
-        // to a pipe is effectively non-blocking. Body + Flush stay cancellable.
+        // Sync Write for the header pieces: Span<byte> can't survive an await,
+        // and <30 ASCII bytes to a pipe is non-blocking. Body + Flush stay async.
         Span<byte> digits = stackalloc byte[12];
         if (!Utf8Formatter.TryFormat(body.Length, digits, out var written))
         {

@@ -152,11 +152,6 @@ internal static class Program
 
     internal static async Task PumpAsync(Stream source, Stream sink, bool isClientToServer, ProxyState state, CancellationToken ct)
     {
-        // System.IO.Pipelines: PipeReader manages a pool of buffers internally and
-        // exposes them as ReadOnlySequence<byte>. We slice frames out without copying,
-        // forward via PipeWriter (which writes into its own pooled buffers), and the
-        // pipe handles all the back-pressure / partial-read accumulation for us.
-        // No allocation per frame on the hot path.
         var reader = PipeReader.Create(source);
         var writer = PipeWriter.Create(sink);
 
@@ -177,11 +172,7 @@ internal static class Program
 
                         if (methodKind == 1)
                         {
-                            // One-time per session: parse for workspaceFolders / rootUri.
-                            // Utf8JsonReader walks ReadOnlySequence<byte> natively, so we
-                            // don't have to materialize the body into a byte[] for the
-                            // multi-segment case. JsonNode.Parse(ref reader) takes it from
-                            // there. See https://learn.microsoft.com/dotnet/api/system.text.json.nodes.jsonnode.parse
+                            // Once-per-session full parse to extract workspaceFolders / rootUri.
                             JsonObject? message = null;
                             try
                             {
@@ -202,10 +193,6 @@ internal static class Program
 
                         if (methodKind == 2 && !state.OpenSent)
                         {
-                            // Inject `solution/open` / `project/open` once after the client's
-                            // `initialized`. Use the PipeWriter as a Stream because the helper
-                            // is shared with the cold-path tests; this happens at most once
-                            // per session so the adapter overhead is irrelevant.
                             using var writerAsStream = writer.AsStream(leaveOpen: true);
                             var sent = await TrySendOpenAsync(writerAsStream, state, ct);
                             state.OpenSent = true;
@@ -385,7 +372,6 @@ internal static class Program
     internal static IEnumerable<string> FindAll(string root, string pattern)
         => EnumerateFilesPruned(root, pattern);
 
-    // Recursive enumeration that prunes node_modules / bin / obj / .git / etc.
     internal static IEnumerable<string> EnumerateFilesPruned(string root, string pattern)
     {
         var stack = new Stack<string>();
