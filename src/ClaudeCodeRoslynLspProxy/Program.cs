@@ -599,14 +599,13 @@ internal static class Program
         return WriteFrameAsync(sink, JsonSerializer.SerializeToUtf8Bytes(msg), ct);
     }
 
-    // Hot-path frame reader. The returned buffer is rented from ArrayPool<byte>.Shared
-    // and must be returned by the caller. Only [0, length) is valid content.
-    internal static async Task<(byte[] buffer, int length)?> ReadFramePooledAsync(Stream source, CancellationToken ct)
+    // Cold-path / test frame reader. Byte-at-a-time header read so that two
+    // sequential ReadFrameAsync calls on the same Stream advance exactly one frame
+    // each — a PipeReader wrapper can't be substituted here because it buffers
+    // ahead and a fresh PipeReader per call would lose those buffered bytes between
+    // calls. The hot-path PumpAsync uses Pipelines directly.
+    internal static async Task<byte[]?> ReadFrameAsync(Stream source, CancellationToken ct)
     {
-        // Byte-at-a-time header read so that two ReadFrameAsync calls on the same
-        // Stream advance exactly one frame each — PipeReader can't be substituted
-        // here because it buffers ahead and a fresh PipeReader per call would lose
-        // the buffered bytes between calls. The hot-path PumpAsync uses Pipelines.
         var oneByte = new byte[1];
         var lineBuf = new byte[64];
         var lineLen = 0;
@@ -665,41 +664,18 @@ internal static class Program
             throw new InvalidDataException("missing Content-Length header");
         }
 
-        var body = ArrayPool<byte>.Shared.Rent(contentLength);
+        var body = new byte[contentLength];
         var read = 0;
         while (read < contentLength)
         {
             var nb = await source.ReadAsync(body.AsMemory(read, contentLength - read), ct);
             if (nb == 0)
             {
-                ArrayPool<byte>.Shared.Return(body);
                 return null;
             }
             read += nb;
         }
-        return (body, contentLength);
-    }
-
-    // Convenience wrapper for tests / cold paths that want a byte[] of exact length.
-    // The pooled buffer is returned automatically; callers receive a fresh array.
-    internal static async Task<byte[]?> ReadFrameAsync(Stream source, CancellationToken ct)
-    {
-        var pooled = await ReadFramePooledAsync(source, ct);
-        if (pooled is null)
-        {
-            return null;
-        }
-        var (buf, len) = pooled.Value;
-        try
-        {
-            var copy = new byte[len];
-            buf.AsSpan(0, len).CopyTo(copy);
-            return copy;
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buf);
-        }
+        return body;
     }
 
     static bool StartsWithCaseInsensitive(ReadOnlySpan<byte> input, ReadOnlySpan<byte> prefix)
