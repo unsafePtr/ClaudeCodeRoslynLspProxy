@@ -15,7 +15,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>ClaudeCodeRoslynLspProxy</ToolCommandName>
     <PackageId>ClaudeCodeRoslynLspProxy</PackageId>
-    <Version>0.2.4</Version>
+    <Version>0.3.0</Version>
     <Authors>unsafePtr</Authors>
     <Description>Thin LSP proxy that injects Roslyn's solution/open notification so Microsoft.CodeAnalysis.LanguageServer works as a solution-aware C# language server inside Claude Code.</Description>
     <PackageTags>claude-code;lsp;roslyn;csharp;dotnet;language-server</PackageTags>
