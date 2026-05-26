@@ -178,19 +178,15 @@ internal static class Program
                         if (methodKind == 1)
                         {
                             // One-time per session: parse for workspaceFolders / rootUri.
+                            // Utf8JsonReader walks ReadOnlySequence<byte> natively, so we
+                            // don't have to materialize the body into a byte[] for the
+                            // multi-segment case. JsonNode.Parse(ref reader) takes it from
+                            // there. See https://learn.microsoft.com/dotnet/api/system.text.json.nodes.jsonnode.parse
                             JsonObject? message = null;
                             try
                             {
-                                // JsonNode.Parse accepts ReadOnlySpan<byte> only on contiguous
-                                // memory; in the multi-segment case we copy once (still <1ms).
-                                if (frame.IsSingleSegment)
-                                {
-                                    message = JsonNode.Parse(frame.FirstSpan) as JsonObject;
-                                }
-                                else
-                                {
-                                    message = JsonNode.Parse(frame.ToArray()) as JsonObject;
-                                }
+                                var jsonReader = new Utf8JsonReader(frame);
+                                message = JsonNode.Parse(ref jsonReader) as JsonObject;
                             }
                             catch
                             {
