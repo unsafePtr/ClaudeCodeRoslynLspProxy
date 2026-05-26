@@ -1,6 +1,6 @@
 {
   "name": "roslyn-lsp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Solution-aware Microsoft Roslyn LSP via ClaudeCodeRoslynLspProxy",
   "author": { "name": "unsafePtr", "url": "https://github.com/unsafePtr" },
   "homepage": "https://github.com/unsafePtr/ClaudeCodeRoslynLspProxy",

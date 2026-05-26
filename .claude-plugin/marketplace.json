@@ -1,13 +1,13 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "claude-roslyn-lsp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Roslyn LSP for Claude Code with solution/open injection",
   "owner": { "name": "unsafePtr" },
   "plugins": [
     {
       "name": "roslyn-lsp",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "source": "./roslyn-lsp",
       "category": "development",
       "tags": ["csharp", "dotnet", "lsp", "roslyn"],
