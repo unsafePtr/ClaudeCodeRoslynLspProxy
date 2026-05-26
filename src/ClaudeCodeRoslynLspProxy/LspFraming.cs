@@ -151,26 +151,20 @@ internal static class LspFraming
 
     internal static async ValueTask WriteFrameAsync(Stream sink, ReadOnlyMemory<byte> body, CancellationToken ct)
     {
-        // LSP framing is ASCII, identical on every OS: "Content-Length: " (16) +
-        // up to 10 digits + "\r\n\r\n" (4) — 32 bytes is plenty. Stack-allocate so
-        // there's no heap traffic for the header at all.
-        Span<byte> header = stackalloc byte[32];
-        ReadOnlySpan<byte> prefix = "Content-Length: "u8;
-        prefix.CopyTo(header);
-        if (!Utf8Formatter.TryFormat(body.Length, header.Slice(prefix.Length), out var written))
+        // LSP framing is ASCII, identical on every OS. "Content-Length: " and
+        // "\r\n\r\n" are u8 literals (no allocation); only the digit run needs
+        // a stack slot (int32 max = 10 decimal digits). Three sync writes — the
+        // OS pipe buffer coalesces them; we save the 32-byte temp + the CopyTo.
+        // Sync Write is used because Span<byte> can't survive an await; <30 bytes
+        // to a pipe is effectively non-blocking. Body + Flush stay cancellable.
+        Span<byte> digits = stackalloc byte[12];
+        if (!Utf8Formatter.TryFormat(body.Length, digits, out var written))
         {
             throw new InvalidOperationException("failed to format Content-Length");
         }
-        var p = prefix.Length + written;
-        header[p++] = (byte)'\r';
-        header[p++] = (byte)'\n';
-        header[p++] = (byte)'\r';
-        header[p++] = (byte)'\n';
-
-        // Header bytes go out via a sync Write — Span<byte> from stackalloc can't
-        // survive an await, and writing ≤30 ASCII bytes to a pipe is effectively
-        // instantaneous. The body and flush use the cancellable async path.
-        sink.Write(header.Slice(0, p));
+        sink.Write("Content-Length: "u8);
+        sink.Write(digits.Slice(0, written));
+        sink.Write("\r\n\r\n"u8);
         await sink.WriteAsync(body, ct);
         await sink.FlushAsync(ct);
     }
