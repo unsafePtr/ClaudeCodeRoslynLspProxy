@@ -10,8 +10,8 @@ namespace ClaudeCodeRoslynLspProxy.Tests;
 // because PipeReader buffers ahead — two sequential ReadFrameAsync calls
 // on the same Stream would lose data buffered by the first wrapper.
 //
-// Reuses `Program.StartsWithCaseInsensitive` / `Program.TrimAscii` via
-// `InternalsVisibleTo("ClaudeCodeRoslynLspProxy.Tests")` so the
+// Reuses `LspFraming.StartsWithCaseInsensitive` / `LspFraming.TrimAscii`
+// via `InternalsVisibleTo("ClaudeCodeRoslynLspProxy.Tests")` so the
 // case-insensitive Content-Length matching matches production exactly.
 internal static class FrameReader
 {
@@ -48,9 +48,9 @@ internal static class FrameReader
                 }
                 var line = lineBuf.AsSpan(0, lineLen);
                 ReadOnlySpan<byte> tag = "Content-Length:"u8;
-                if (line.Length > tag.Length && Program.StartsWithCaseInsensitive(line, tag))
+                if (line.Length > tag.Length && LspFraming.StartsWithCaseInsensitive(line, tag))
                 {
-                    var rest = Program.TrimAscii(line.Slice(tag.Length));
+                    var rest = LspFraming.TrimAscii(line.Slice(tag.Length));
                     if (Utf8Parser.TryParse(rest, out int cl, out _))
                     {
                         contentLength = cl;
