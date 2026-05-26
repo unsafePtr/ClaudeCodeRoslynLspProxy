@@ -247,8 +247,12 @@ internal static class Program
                             }
                         }
 
+                        // `examined` stays at buffer.End: TryReadFrame walked the whole
+                        // residual to decide "not enough yet", so we've examined to End.
+                        // Setting examined < buffer.End would make ReadAsync return
+                        // synchronously with the same bytes and hot-spin until more data.
                         consumed = buffer.Start;
-                        examined = buffer.Start;
+                        examined = buffer.End;
                     }
 
                     if (result.IsCompleted)
