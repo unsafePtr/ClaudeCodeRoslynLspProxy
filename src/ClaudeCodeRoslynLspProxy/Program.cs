@@ -599,86 +599,8 @@ internal static class Program
         return WriteFrameAsync(sink, JsonSerializer.SerializeToUtf8Bytes(msg), ct);
     }
 
-    // Cold-path / test frame reader. Byte-at-a-time header read so that two
-    // sequential ReadFrameAsync calls on the same Stream advance exactly one frame
-    // each — a PipeReader wrapper can't be substituted here because it buffers
-    // ahead and a fresh PipeReader per call would lose those buffered bytes between
-    // calls. The hot-path PumpAsync uses Pipelines directly.
-    internal static async ValueTask<byte[]?> ReadFrameAsync(Stream source, CancellationToken ct)
-    {
-        var oneByte = new byte[1];
-        var lineBuf = new byte[64];
-        var lineLen = 0;
-        var contentLength = -1;
 
-        while (true)
-        {
-            var n = await source.ReadAsync(oneByte.AsMemory(0, 1), ct);
-            if (n == 0)
-            {
-                return null;
-            }
-            var b = oneByte[0];
-
-            if (b == (byte)'\r')
-            {
-                n = await source.ReadAsync(oneByte.AsMemory(0, 1), ct);
-                if (n == 0)
-                {
-                    return null;
-                }
-                if (oneByte[0] != (byte)'\n')
-                {
-                    throw new InvalidDataException($"expected LF after CR, got {oneByte[0]}");
-                }
-                if (lineLen == 0)
-                {
-                    break;
-                }
-                var line = lineBuf.AsSpan(0, lineLen);
-                ReadOnlySpan<byte> tag = "Content-Length:"u8;
-                if (line.Length > tag.Length && StartsWithCaseInsensitive(line, tag))
-                {
-                    var rest = TrimAscii(line.Slice(tag.Length));
-                    if (Utf8Parser.TryParse(rest, out int cl, out _))
-                    {
-                        contentLength = cl;
-                    }
-                }
-                lineLen = 0;
-            }
-            else
-            {
-                if (lineLen == lineBuf.Length)
-                {
-                    var bigger = new byte[lineBuf.Length * 2];
-                    lineBuf.AsSpan().CopyTo(bigger);
-                    lineBuf = bigger;
-                }
-                lineBuf[lineLen++] = b;
-            }
-        }
-
-        if (contentLength < 0)
-        {
-            throw new InvalidDataException("missing Content-Length header");
-        }
-
-        var body = new byte[contentLength];
-        var read = 0;
-        while (read < contentLength)
-        {
-            var nb = await source.ReadAsync(body.AsMemory(read, contentLength - read), ct);
-            if (nb == 0)
-            {
-                return null;
-            }
-            read += nb;
-        }
-        return body;
-    }
-
-    static bool StartsWithCaseInsensitive(ReadOnlySpan<byte> input, ReadOnlySpan<byte> prefix)
+    internal static bool StartsWithCaseInsensitive(ReadOnlySpan<byte> input, ReadOnlySpan<byte> prefix)
     {
         if (input.Length < prefix.Length)
         {
@@ -704,7 +626,7 @@ internal static class Program
         return true;
     }
 
-    static ReadOnlySpan<byte> TrimAscii(ReadOnlySpan<byte> s)
+    internal static ReadOnlySpan<byte> TrimAscii(ReadOnlySpan<byte> s)
     {
         var start = 0;
         var end = s.Length;

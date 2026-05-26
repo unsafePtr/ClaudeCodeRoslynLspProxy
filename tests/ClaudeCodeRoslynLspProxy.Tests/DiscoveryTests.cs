@@ -96,7 +96,7 @@ public class DiscoveryTests : IDisposable
         Assert.Contains("New.slnx", summary, StringComparison.OrdinalIgnoreCase);
 
         sink.Position = 0;
-        var body = await Program.ReadFrameAsync(sink, default);
+        var body = await FrameReader.ReadFrameAsync(sink, default);
         Assert.NotNull(body);
         var json = JsonNode.Parse(body) as JsonObject;
         Assert.Equal("solution/open", json?["method"]?.GetValue<string>());
@@ -137,7 +137,7 @@ public class DiscoveryTests : IDisposable
         Assert.Contains("project/open", summary);
 
         sink.Position = 0;
-        var body = await Program.ReadFrameAsync(sink, default);
+        var body = await FrameReader.ReadFrameAsync(sink, default);
         Assert.NotNull(body);
         var json = JsonNode.Parse(body) as JsonObject;
         Assert.Equal("project/open", json?["method"]?.GetValue<string>());
