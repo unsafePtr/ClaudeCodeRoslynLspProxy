@@ -68,4 +68,19 @@ public class ServerPathTests : IDisposable
         Assert.EndsWith(Path.Combine("roslyn-lsp-logs", "proxy.log"), p);
         Assert.StartsWith(Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar), p.TrimEnd(Path.DirectorySeparatorChar));
     }
+
+    [Theory]
+    [InlineData("foo.cmd", true)]
+    [InlineData("foo.CMD", true)]
+    [InlineData("C:/tools/roslyn-language-server.cmd", true)]
+    [InlineData("foo.bat", true)]
+    [InlineData("foo.BAT", true)]
+    [InlineData("foo.exe", false)]
+    [InlineData("foo", false)]
+    [InlineData("/usr/bin/roslyn-language-server", false)]
+    [InlineData("", false)]
+    public void IsBatchShim_RecognisesWindowsBatchExtensionsCaseInsensitively(string path, bool expected)
+    {
+        Assert.Equal(expected, Program.IsBatchShim(path));
+    }
 }

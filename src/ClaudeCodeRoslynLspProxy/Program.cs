@@ -92,13 +92,31 @@ internal static class Program
 
         var psi = new ProcessStartInfo
         {
-            FileName = serverPath,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+
+        // Windows batch shims (.cmd / .bat) cannot be launched by CreateProcess directly;
+        // .NET's Process.Start handles them via implicit cmd.exe wrapping, but the implicit
+        // wrap interacts badly with redirected binary stdio (cmd.exe inserts its own buffering
+        // and, in some configurations, mangles CRLF on the pipe). LSP framing relies on a raw
+        // byte stream, so wrap explicitly with `cmd.exe /d /c` — /d disables AutoRun so a user
+        // CMD profile cannot inject prologue output into our stdout.
+        if (OperatingSystem.IsWindows() && IsBatchShim(serverPath))
+        {
+            psi.FileName = "cmd.exe";
+            psi.ArgumentList.Add("/d");
+            psi.ArgumentList.Add("/c");
+            psi.ArgumentList.Add(serverPath);
+        }
+        else
+        {
+            psi.FileName = serverPath;
+        }
+
         foreach (var sa in serverArgs)
         {
             psi.ArgumentList.Add(sa);
@@ -523,6 +541,13 @@ internal static class Program
         }
 
         return path;
+    }
+
+    internal static bool IsBatchShim(string path)
+    {
+        var ext = Path.GetExtension(path);
+        return ext.Equals(".cmd", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".bat", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static string DefaultLogPath()
