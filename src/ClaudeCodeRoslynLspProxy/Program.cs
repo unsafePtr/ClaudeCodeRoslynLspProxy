@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Buffers.Text;
 using System.Diagnostics;
+using System.IO.Pipelines;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -151,60 +152,191 @@ internal static class Program
 
     internal static async Task PumpAsync(Stream source, Stream sink, bool isClientToServer, ProxyState state, CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested)
+        // System.IO.Pipelines: PipeReader manages a pool of buffers internally and
+        // exposes them as ReadOnlySequence<byte>. We slice frames out without copying,
+        // forward via PipeWriter (which writes into its own pooled buffers), and the
+        // pipe handles all the back-pressure / partial-read accumulation for us.
+        // No allocation per frame on the hot path.
+        var reader = PipeReader.Create(source);
+        var writer = PipeWriter.Create(sink);
+
+        try
         {
-            var pooled = await ReadFramePooledAsync(source, ct);
-            if (pooled is null)
+            while (!ct.IsCancellationRequested)
             {
-                return;
-            }
-            var (buffer, length) = pooled.Value;
-            try
-            {
-                var bodySpan = buffer.AsMemory(0, length);
+                var result = await reader.ReadAsync(ct);
+                var buffer = result.Buffer;
+                var consumed = buffer.Start;
+                var examined = buffer.End;
 
-                // Peek `method` from JSON bytes only — full parse is reserved for messages
-                // we actually care about. 1 = "initialize", 2 = "initialized", 0 = neither.
-                var methodKind = isClientToServer ? PeekInitMethod(bodySpan.Span) : 0;
-
-                if (methodKind == 1)
+                try
                 {
-                    JsonObject? message = null;
-                    try
+                    while (TryReadFrame(ref buffer, out var frame))
                     {
-                        message = JsonNode.Parse(bodySpan.Span) as JsonObject;
+                        var methodKind = isClientToServer ? PeekInitMethod(frame) : 0;
+
+                        if (methodKind == 1)
+                        {
+                            // One-time per session: parse for workspaceFolders / rootUri.
+                            JsonObject? message = null;
+                            try
+                            {
+                                // JsonNode.Parse accepts ReadOnlySpan<byte> only on contiguous
+                                // memory; in the multi-segment case we copy once (still <1ms).
+                                if (frame.IsSingleSegment)
+                                {
+                                    message = JsonNode.Parse(frame.FirstSpan) as JsonObject;
+                                }
+                                else
+                                {
+                                    message = JsonNode.Parse(frame.ToArray()) as JsonObject;
+                                }
+                            }
+                            catch
+                            {
+                                // Non-JSON or malformed — forward bytes verbatim.
+                            }
+                            if (message is not null)
+                            {
+                                InspectClientToServer(message, state);
+                            }
+                        }
+
+                        await WriteFrameAsync(writer, frame, ct);
+
+                        if (methodKind == 2 && !state.OpenSent)
+                        {
+                            // Inject `solution/open` / `project/open` once after the client's
+                            // `initialized`. Use the PipeWriter as a Stream because the helper
+                            // is shared with the cold-path tests; this happens at most once
+                            // per session so the adapter overhead is irrelevant.
+                            using var writerAsStream = writer.AsStream(leaveOpen: true);
+                            var sent = await TrySendOpenAsync(writerAsStream, state, ct);
+                            state.OpenSent = true;
+                            if (state.Log is not null)
+                            {
+                                state.Log.WriteLine($"[proxy] open notification sent: {sent ?? "(none — transparent pipe)"}");
+                                await state.Log.FlushAsync(ct);
+                            }
+                        }
+
+                        consumed = buffer.Start;
+                        examined = buffer.Start;
                     }
-                    catch
+
+                    if (result.IsCompleted)
                     {
-                        // Non-JSON or malformed — forward bytes verbatim.
-                    }
-                    if (message is not null)
-                    {
-                        InspectClientToServer(message, state);
+                        if (!buffer.IsEmpty)
+                        {
+                            throw new InvalidDataException("incomplete frame at end of stream");
+                        }
+                        return;
                     }
                 }
-
-                await WriteFrameAsync(sink, bodySpan, ct);
-
-                // After forwarding the client's `initialized` to the server, inject the
-                // Roslyn-specific open-solution / open-projects notification so the server
-                // builds a full workspace graph instead of running per-document.
-                if (methodKind == 2 && !state.OpenSent)
+                finally
                 {
-                    var sent = await TrySendOpenAsync(sink, state, ct);
-                    state.OpenSent = true;
-                    if (state.Log is not null)
-                    {
-                        state.Log.WriteLine($"[proxy] open notification sent: {sent ?? "(none — transparent pipe)"}");
-                        await state.Log.FlushAsync(ct);
-                    }
+                    reader.AdvanceTo(consumed, examined);
                 }
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
             }
         }
+        finally
+        {
+            await reader.CompleteAsync();
+            await writer.CompleteAsync();
+        }
+    }
+
+    // Try to slice one full LSP frame out of `buffer`. On success, `frame` is a view
+    // of the body bytes and `buffer` is advanced past the header + body. On failure
+    // (not enough data yet), returns false and leaves `buffer` untouched.
+    static bool TryReadFrame(ref ReadOnlySequence<byte> buffer, out ReadOnlySequence<byte> frame)
+    {
+        frame = default;
+
+        var seqReader = new SequenceReader<byte>(buffer);
+        if (!seqReader.TryReadTo(out ReadOnlySequence<byte> headers, "\r\n\r\n"u8, advancePastDelimiter: true))
+        {
+            return false;
+        }
+
+        var contentLength = ParseContentLength(headers);
+        if (contentLength < 0)
+        {
+            throw new InvalidDataException("missing Content-Length header");
+        }
+
+        if (seqReader.Remaining < contentLength)
+        {
+            return false;
+        }
+
+        frame = seqReader.UnreadSequence.Slice(0, contentLength);
+        seqReader.Advance(contentLength);
+        buffer = buffer.Slice(seqReader.Position);
+        return true;
+    }
+
+    static int ParseContentLength(ReadOnlySequence<byte> headers)
+    {
+        ReadOnlySpan<byte> tag = "Content-Length:"u8;
+        var r = new SequenceReader<byte>(headers);
+
+        while (!r.End)
+        {
+            ReadOnlySequence<byte> line;
+            if (!r.TryReadTo(out line, "\r\n"u8, advancePastDelimiter: true))
+            {
+                line = r.UnreadSequence;
+                r.AdvanceToEnd();
+            }
+
+            Span<byte> stack = stackalloc byte[128];
+            if (line.Length > stack.Length)
+            {
+                continue;
+            }
+            line.CopyTo(stack);
+            var ls = stack.Slice(0, (int)line.Length);
+
+            if (ls.Length > tag.Length && StartsWithCaseInsensitive(ls, tag))
+            {
+                var rest = TrimAscii(ls.Slice(tag.Length));
+                if (Utf8Parser.TryParse(rest, out int cl, out _))
+                {
+                    return cl;
+                }
+                return -1;
+            }
+        }
+
+        return -1;
+    }
+
+    internal static async Task WriteFrameAsync(PipeWriter writer, ReadOnlySequence<byte> body, CancellationToken ct)
+    {
+        Span<byte> headerStack = stackalloc byte[32];
+        ReadOnlySpan<byte> prefix = "Content-Length: "u8;
+        prefix.CopyTo(headerStack);
+        if (!Utf8Formatter.TryFormat(body.Length, headerStack.Slice(prefix.Length), out var written))
+        {
+            throw new InvalidOperationException("failed to format Content-Length");
+        }
+        var p = prefix.Length + written;
+        headerStack[p++] = (byte)'\r';
+        headerStack[p++] = (byte)'\n';
+        headerStack[p++] = (byte)'\r';
+        headerStack[p++] = (byte)'\n';
+
+        var span = writer.GetSpan(p);
+        headerStack.Slice(0, p).CopyTo(span);
+        writer.Advance(p);
+
+        foreach (var segment in body)
+        {
+            writer.Write(segment.Span);
+        }
+
+        await writer.FlushAsync(ct);
     }
 
     // Returns 1 if `method` == "initialize", 2 if "initialized", 0 otherwise (including non-JSON).
@@ -214,40 +346,60 @@ internal static class Program
         try
         {
             var reader = new Utf8JsonReader(body);
-            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
-            {
-                return 0;
-            }
-            while (reader.Read())
-            {
-                if (reader.TokenType == JsonTokenType.EndObject)
-                {
-                    return 0;
-                }
-                if (reader.TokenType == JsonTokenType.PropertyName && reader.ValueTextEquals("method"u8))
-                {
-                    if (!reader.Read() || reader.TokenType != JsonTokenType.String)
-                    {
-                        return 0;
-                    }
-                    if (reader.ValueTextEquals("initialize"u8))
-                    {
-                        return 1;
-                    }
-                    if (reader.ValueTextEquals("initialized"u8))
-                    {
-                        return 2;
-                    }
-                    return 0;
-                }
-                reader.Skip();
-            }
-            return 0;
+            return PeekInitMethodCore(ref reader);
         }
         catch
         {
             return 0;
         }
+    }
+
+    // Sequence overload — Utf8JsonReader has a sequence-aware constructor that walks
+    // multi-segment buffers without copying.
+    internal static int PeekInitMethod(ReadOnlySequence<byte> body)
+    {
+        try
+        {
+            var reader = new Utf8JsonReader(body);
+            return PeekInitMethodCore(ref reader);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    static int PeekInitMethodCore(ref Utf8JsonReader reader)
+    {
+        if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+        {
+            return 0;
+        }
+        while (reader.Read())
+        {
+            if (reader.TokenType == JsonTokenType.EndObject)
+            {
+                return 0;
+            }
+            if (reader.TokenType == JsonTokenType.PropertyName && reader.ValueTextEquals("method"u8))
+            {
+                if (!reader.Read() || reader.TokenType != JsonTokenType.String)
+                {
+                    return 0;
+                }
+                if (reader.ValueTextEquals("initialize"u8))
+                {
+                    return 1;
+                }
+                if (reader.ValueTextEquals("initialized"u8))
+                {
+                    return 2;
+                }
+                return 0;
+            }
+            reader.Skip();
+        }
+        return 0;
     }
 
     internal static void InspectClientToServer(JsonObject message, ProxyState state)
