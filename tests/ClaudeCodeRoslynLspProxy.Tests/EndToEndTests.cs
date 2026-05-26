@@ -184,6 +184,35 @@ public class EndToEndTests : IDisposable
         await Task.WhenAny(Task.WhenAll(c2sTask, s2cTask), Task.Delay(2000, cts.Token));
     }
 
+    // Regression: when the upstream stream completes with leftover bytes that don't
+    // form a valid LSP frame (e.g. a Roslyn server printed a startup banner to stdout
+    // before getting killed, or a client closed mid-frame), PumpAsync surfaces an
+    // InvalidDataException. This is the contract that Main's shutdown await must
+    // catch so the proxy does not crash with an unhandled exception — see Main's
+    // post-cancel `catch (Exception)` block.
+    [Fact]
+    public async Task PumpAsync_ThrowsInvalidData_WhenStreamCompletesWithLeftoverNonFrameBytes()
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(5));
+
+        var source = new Pipe();
+        var sink = new Pipe();
+        var state = new Program.ProxyState();
+
+        var pumpTask = Program.PumpAsync(
+            source.Reader.AsStream(),
+            sink.Writer.AsStream(),
+            isClientToServer: false,
+            state,
+            cts.Token);
+
+        await source.Writer.WriteAsync(Encoding.UTF8.GetBytes("not-an-lsp-frame\n"), cts.Token);
+        await source.Writer.CompleteAsync();
+
+        await Assert.ThrowsAsync<InvalidDataException>(async () => await pumpTask);
+    }
+
     static async Task WriteJson(PipeWriter writer, JsonObject obj, CancellationToken ct)
     {
         var body = Encoding.UTF8.GetBytes(obj.ToJsonString(JsonSerializerOptions.Default));

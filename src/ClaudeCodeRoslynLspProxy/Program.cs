@@ -167,6 +167,29 @@ internal static class Program
         {
             // expected on shutdown
         }
+        catch (Exception ex)
+        {
+            // PumpAsync can surface protocol-level signals on shutdown — e.g. an inner
+            // server that printed non-LSP preamble bytes to stdout before getting killed,
+            // or a peer that closed mid-frame. We have already cancelled and torn down
+            // the child, so treat any exception here as shutdown noise: record it for
+            // diagnostics and exit non-zero rather than crashing with an unhandled
+            // exception. Without this, transient startup chatter from misbehaving servers
+            // takes the whole proxy down and Claude Code marks the LSP as failed.
+            if (log is not null)
+            {
+                try
+                {
+                    await log.WriteLineAsync($"[proxy] shutdown after pump exception: {ex.GetType().Name}: {ex.Message}");
+                    await log.FlushAsync();
+                }
+                catch
+                {
+                    // best-effort
+                }
+            }
+            return 1;
+        }
 
         return 0;
     }
