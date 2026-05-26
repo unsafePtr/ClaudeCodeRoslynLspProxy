@@ -364,21 +364,20 @@ internal static class Program
 
     internal static async ValueTask WriteFrameAsync(PipeWriter writer, ReadOnlySequence<byte> body, CancellationToken ct)
     {
-        Span<byte> headerStack = stackalloc byte[32];
+        // Header: "Content-Length: " (16) + up to 10 digits + "\r\n\r\n" (4) = 30 bytes max.
+        // Format directly into the writer's pooled buffer — no stackalloc temp, no CopyTo.
         ReadOnlySpan<byte> prefix = "Content-Length: "u8;
-        prefix.CopyTo(headerStack);
-        if (!Utf8Formatter.TryFormat(body.Length, headerStack.Slice(prefix.Length), out var written))
+        var span = writer.GetSpan(32);
+        prefix.CopyTo(span);
+        if (!Utf8Formatter.TryFormat(body.Length, span.Slice(prefix.Length), out var written))
         {
             throw new InvalidOperationException("failed to format Content-Length");
         }
         var p = prefix.Length + written;
-        headerStack[p++] = (byte)'\r';
-        headerStack[p++] = (byte)'\n';
-        headerStack[p++] = (byte)'\r';
-        headerStack[p++] = (byte)'\n';
-
-        var span = writer.GetSpan(p);
-        headerStack.Slice(0, p).CopyTo(span);
+        span[p++] = (byte)'\r';
+        span[p++] = (byte)'\n';
+        span[p++] = (byte)'\r';
+        span[p++] = (byte)'\n';
         writer.Advance(p);
 
         foreach (var segment in body)
@@ -527,18 +526,10 @@ internal static class Program
     }
 
     internal static string? FindFirst(string root, string pattern)
-    {
-        foreach (var p in EnumerateFilesPruned(root, pattern))
-        {
-            return p;
-        }
-        return null;
-    }
+        => EnumerateFilesPruned(root, pattern).FirstOrDefault();
 
     internal static IEnumerable<string> FindAll(string root, string pattern)
-    {
-        return EnumerateFilesPruned(root, pattern);
-    }
+        => EnumerateFilesPruned(root, pattern);
 
     // Recursive enumeration that prunes node_modules / bin / obj / .git / etc.
     internal static IEnumerable<string> EnumerateFilesPruned(string root, string pattern)
@@ -589,7 +580,7 @@ internal static class Program
             ["method"] = "solution/open",
             ["params"] = new JsonObject { ["solution"] = solutionUri },
         };
-        return WriteJsonFrameAsync(sink, msg, ct);
+        return WriteFrameAsync(sink, JsonSerializer.SerializeToUtf8Bytes(msg), ct);
     }
 
     internal static ValueTask SendProjectOpenAsync(Stream sink, string[] projectUris, CancellationToken ct)
@@ -605,22 +596,17 @@ internal static class Program
             ["method"] = "project/open",
             ["params"] = new JsonObject { ["projects"] = arr },
         };
-        return WriteJsonFrameAsync(sink, msg, ct);
-    }
-
-    internal static ValueTask WriteJsonFrameAsync(Stream sink, JsonObject msg, CancellationToken ct)
-    {
-        var body = Encoding.UTF8.GetBytes(msg.ToJsonString(JsonSerializerOptions.Default));
-        return WriteFrameAsync(sink, body, ct);
+        return WriteFrameAsync(sink, JsonSerializer.SerializeToUtf8Bytes(msg), ct);
     }
 
     // Hot-path frame reader. The returned buffer is rented from ArrayPool<byte>.Shared
     // and must be returned by the caller. Only [0, length) is valid content.
     internal static async Task<(byte[] buffer, int length)?> ReadFramePooledAsync(Stream source, CancellationToken ct)
     {
-        // One byte[1] per FRAME (not per byte). LSP headers are short (~30 bytes),
-        // the cost of buffering more aggressively isn't worth the added complexity
-        // around carrying leftover bytes between frames.
+        // Byte-at-a-time header read so that two ReadFrameAsync calls on the same
+        // Stream advance exactly one frame each — PipeReader can't be substituted
+        // here because it buffers ahead and a fresh PipeReader per call would lose
+        // the buffered bytes between calls. The hot-path PumpAsync uses Pipelines.
         var oneByte = new byte[1];
         var lineBuf = new byte[64];
         var lineLen = 0;
