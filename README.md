@@ -71,7 +71,7 @@ Prereqs: .NET 10 SDK; Claude Code 2.1.50+; `ENABLE_LSP_TOOL=1` in your `~/.claud
    /plugin install roslyn-lsp@claude-roslyn-lsp
    ```
 
-5. Restart Claude Code to load the plugin. The proxy launches `roslyn-language-server` with `--logLevel Information` and no `--telemetryLevel` (Roslyn's own default applies). Fork the manifest if you need different values; the plugin no longer exposes a user-config prompt for these because the prompt-substitution path proved fragile in practice.
+5. Restart Claude Code to load the plugin. No config prompt — the proxy invokes `roslyn-language-server --stdio --autoLoadProjects --logLevel Information` and lets Roslyn use its own telemetry default (silent). Fork the manifest if you need different values; the plugin intentionally does not expose a `userConfig` prompt because `${user_config.*}` substitution fails silently when the prompt is dismissed or its values fail to persist, which leaves the LSP unable to start.
 
 6. Verify with `/plugin` — `roslyn-lsp@claude-roslyn-lsp` should be listed as enabled.
 
