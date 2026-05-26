@@ -276,12 +276,14 @@ internal static class Program
         return true;
     }
 
+    // Mirrors Microsoft's StreamJsonRpc header-parsing pattern: split each line at
+    // the colon, then only stackalloc the value bytes (capped tightly) and take a
+    // zero-copy span when the value sits on a single segment. See
+    // https://github.com/microsoft/vs-streamjsonrpc/blob/main/src/StreamJsonRpc/HeaderDelimitedMessageHandler.cs
+    // (search for `GetContentLength` and the header-name dispatch around line 465).
     static int ParseContentLength(ReadOnlySequence<byte> headers)
     {
-        ReadOnlySpan<byte> tag = "Content-Length:"u8;
-        // Hoist out of the loop — stackalloc inside a tight loop can grow the stack
-        // frame per iteration under some JITs. One slot, reused.
-        Span<byte> lineStack = stackalloc byte[128];
+        ReadOnlySpan<byte> contentLengthName = "Content-Length"u8;
         var r = new SequenceReader<byte>(headers);
 
         while (!r.End)
@@ -293,28 +295,74 @@ internal static class Program
                 r.AdvanceToEnd();
             }
 
-            if (line.Length > lineStack.Length)
+            // Locate the "name:value" boundary in this line.
+            var lineReader = new SequenceReader<byte>(line);
+            if (!lineReader.TryReadTo(out ReadOnlySequence<byte> name, (byte)':', advancePastDelimiter: true))
             {
                 continue;
             }
-            line.CopyTo(lineStack);
-            var ls = lineStack.Slice(0, (int)line.Length);
 
-            if (ls.Length > tag.Length && StartsWithCaseInsensitive(ls, tag))
+            if (!IsHeaderName(name, contentLengthName))
             {
-                var rest = TrimAscii(ls.Slice(tag.Length));
-                if (Utf8Parser.TryParse(rest, out int cl, out _))
-                {
-                    return cl;
-                }
-                return -1;
+                continue;
             }
+
+            return GetContentLength(lineReader.UnreadSequence);
         }
 
         return -1;
     }
 
-    internal static async Task WriteFrameAsync(PipeWriter writer, ReadOnlySequence<byte> body, CancellationToken ct)
+    static bool IsHeaderName(ReadOnlySequence<byte> nameBytes, ReadOnlySpan<byte> expected)
+    {
+        if (nameBytes.Length != expected.Length)
+        {
+            return false;
+        }
+
+        if (nameBytes.IsSingleSegment)
+        {
+            return StartsWithCaseInsensitive(nameBytes.FirstSpan, expected);
+        }
+
+        Span<byte> scratch = stackalloc byte[64];
+        if (nameBytes.Length > scratch.Length)
+        {
+            return false;
+        }
+        nameBytes.CopyTo(scratch);
+        return StartsWithCaseInsensitive(scratch.Slice(0, (int)nameBytes.Length), expected);
+    }
+
+    static int GetContentLength(ReadOnlySequence<byte> value)
+    {
+        // Tight cap: max int32 as decimal is 10 chars, plus generous whitespace.
+        // Matches StreamJsonRpc's 20-byte ceiling.
+        if (value.Length > 20)
+        {
+            return -1;
+        }
+
+        if (value.IsSingleSegment)
+        {
+            return ParseAscii(TrimAscii(value.FirstSpan));
+        }
+
+        Span<byte> scratch = stackalloc byte[20];
+        value.CopyTo(scratch);
+        return ParseAscii(TrimAscii(scratch.Slice(0, (int)value.Length)));
+
+        static int ParseAscii(ReadOnlySpan<byte> s)
+        {
+            if (!Utf8Parser.TryParse(s, out int parsed, out var consumed) || consumed < s.Length)
+            {
+                return -1;
+            }
+            return parsed;
+        }
+    }
+
+    internal static async ValueTask WriteFrameAsync(PipeWriter writer, ReadOnlySequence<byte> body, CancellationToken ct)
     {
         Span<byte> headerStack = stackalloc byte[32];
         ReadOnlySpan<byte> prefix = "Content-Length: "u8;
@@ -442,7 +490,7 @@ internal static class Program
         state.Log?.WriteLine($"[proxy] workspace folders: {string.Join(", ", state.WorkspaceFolderUris)}");
     }
 
-    internal static async Task<string?> TrySendOpenAsync(Stream sink, ProxyState state, CancellationToken ct)
+    internal static async ValueTask<string?> TrySendOpenAsync(Stream sink, ProxyState state, CancellationToken ct)
     {
         if (!string.IsNullOrEmpty(state.ExplicitSolution))
         {
@@ -533,7 +581,7 @@ internal static class Program
         }
     }
 
-    internal static Task SendSolutionOpenAsync(Stream sink, string solutionUri, CancellationToken ct)
+    internal static ValueTask SendSolutionOpenAsync(Stream sink, string solutionUri, CancellationToken ct)
     {
         var msg = new JsonObject
         {
@@ -544,7 +592,7 @@ internal static class Program
         return WriteJsonFrameAsync(sink, msg, ct);
     }
 
-    internal static Task SendProjectOpenAsync(Stream sink, string[] projectUris, CancellationToken ct)
+    internal static ValueTask SendProjectOpenAsync(Stream sink, string[] projectUris, CancellationToken ct)
     {
         var arr = new JsonArray();
         foreach (var u in projectUris)
@@ -560,7 +608,7 @@ internal static class Program
         return WriteJsonFrameAsync(sink, msg, ct);
     }
 
-    internal static Task WriteJsonFrameAsync(Stream sink, JsonObject msg, CancellationToken ct)
+    internal static ValueTask WriteJsonFrameAsync(Stream sink, JsonObject msg, CancellationToken ct)
     {
         var body = Encoding.UTF8.GetBytes(msg.ToJsonString(JsonSerializerOptions.Default));
         return WriteFrameAsync(sink, body, ct);
@@ -709,7 +757,7 @@ internal static class Program
         return s.Slice(start, end - start);
     }
 
-    internal static async Task WriteFrameAsync(Stream sink, ReadOnlyMemory<byte> body, CancellationToken ct)
+    internal static async ValueTask WriteFrameAsync(Stream sink, ReadOnlyMemory<byte> body, CancellationToken ct)
     {
         // LSP framing is ASCII, identical on every OS: "Content-Length: " (16) +
         // up to 10 digits + "\r\n\r\n" (4) — 32 bytes is plenty. Stack-allocate so
@@ -735,7 +783,7 @@ internal static class Program
         await sink.FlushAsync(ct);
     }
 
-    internal static Task WriteFrameAsync(Stream sink, byte[] body, CancellationToken ct)
+    internal static ValueTask WriteFrameAsync(Stream sink, byte[] body, CancellationToken ct)
         => WriteFrameAsync(sink, body.AsMemory(), ct);
 
     internal static string PathToFileUri(string path)
