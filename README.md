@@ -28,12 +28,34 @@ Roslyn LSP needs this Microsoft-specific notification to load the workspace as a
 
 Prereqs: .NET 10 SDK; Claude Code 2.1.50+; `ENABLE_LSP_TOOL=1` in your `~/.claude/settings.json` `env` block (the LSP tool is currently gated behind this undocumented env var).
 
-1. Install the two `dotnet` tools (both end up on PATH via `~/.dotnet/tools` on Windows, Linux, macOS):
+1. Install the two `dotnet` tools:
    ```pwsh
    dotnet tool install --global roslyn-language-server --prerelease
    dotnet tool install --global ClaudeCodeRoslynLspProxy
    ```
    `roslyn-language-server` is Microsoft's official `Microsoft.CodeAnalysis.LanguageServer` (owners `Microsoft` / `RoslynTeam` on NuGet; source [dotnet/roslyn](https://github.com/dotnet/roslyn)). Microsoft only ships pre-release versions, so `--prerelease` is required.
+
+   > **Make sure the global-tools directory is on `PATH`.** Both tools install to `%USERPROFILE%\.dotnet\tools` on Windows or `$HOME/.dotnet/tools` on Linux/macOS. The .NET SDK installer usually adds this to your user `PATH`, but if it didn't (manual SDK install, side-by-side preview, or a shell that started before the SDK was installed), Claude Code won't find `ClaudeCodeRoslynLspProxy` and the LSP will silently fail to spawn.
+   >
+   > Verify with `where.exe ClaudeCodeRoslynLspProxy` (Windows) / `which ClaudeCodeRoslynLspProxy` (Linux/macOS). If empty, add the directory:
+   >
+   > **Windows (PowerShell)** — persists in the User registry, no terminal restart needed:
+   > ```pwsh
+   > $tools = Join-Path $env:USERPROFILE '.dotnet\tools'
+   > [Environment]::SetEnvironmentVariable(
+   >     'Path',
+   >     ((([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') + $tools | Where-Object { $_ } | Select-Object -Unique) -join ';'),
+   >     'User')
+   > $env:Path = "$env:Path;$tools"
+   > ```
+   >
+   > **Linux / macOS** — pick the rc file your login shell reads:
+   > ```bash
+   > echo 'export PATH="$PATH:$HOME/.dotnet/tools"' >> ~/.profile   # or ~/.bashrc / ~/.zshrc
+   > exec $SHELL -l
+   > ```
+   >
+   > Restart Claude Code after updating `PATH` so the new value is inherited by the harness.
 
 2. Launch Claude Code.
 
