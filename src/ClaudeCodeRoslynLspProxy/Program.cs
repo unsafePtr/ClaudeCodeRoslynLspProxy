@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Buffers.Text;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -151,45 +153,100 @@ internal static class Program
     {
         while (!ct.IsCancellationRequested)
         {
-            var body = await ReadFrameAsync(source, ct);
-            if (body is null)
+            var pooled = await ReadFramePooledAsync(source, ct);
+            if (pooled is null)
             {
                 return;
             }
-
-            JsonObject? message = null;
+            var (buffer, length) = pooled.Value;
             try
             {
-                message = JsonNode.Parse(body) as JsonObject;
-            }
-            catch
-            {
-                // Non-JSON or malformed — forward bytes verbatim.
-            }
+                var bodySpan = buffer.AsMemory(0, length);
 
-            if (isClientToServer && message is not null)
-            {
-                InspectClientToServer(message, state);
-            }
+                // Peek `method` from JSON bytes only — full parse is reserved for messages
+                // we actually care about. 1 = "initialize", 2 = "initialized", 0 = neither.
+                var methodKind = isClientToServer ? PeekInitMethod(bodySpan.Span) : 0;
 
-            await WriteFrameAsync(sink, body, ct);
-
-            // After forwarding the client's `initialized` to the server, inject the
-            // Roslyn-specific open-solution / open-projects notification so the server
-            // builds a full workspace graph instead of running per-document.
-            if (isClientToServer
-                && message is not null
-                && !state.OpenSent
-                && message["method"]?.GetValue<string>() == "initialized")
-            {
-                var sent = await TrySendOpenAsync(sink, state, ct);
-                state.OpenSent = true;
-                if (state.Log is not null)
+                if (methodKind == 1)
                 {
-                    state.Log.WriteLine($"[proxy] open notification sent: {sent ?? "(none — transparent pipe)"}");
-                    await state.Log.FlushAsync(ct);
+                    JsonObject? message = null;
+                    try
+                    {
+                        message = JsonNode.Parse(bodySpan.Span) as JsonObject;
+                    }
+                    catch
+                    {
+                        // Non-JSON or malformed — forward bytes verbatim.
+                    }
+                    if (message is not null)
+                    {
+                        InspectClientToServer(message, state);
+                    }
+                }
+
+                await WriteFrameAsync(sink, bodySpan, ct);
+
+                // After forwarding the client's `initialized` to the server, inject the
+                // Roslyn-specific open-solution / open-projects notification so the server
+                // builds a full workspace graph instead of running per-document.
+                if (methodKind == 2 && !state.OpenSent)
+                {
+                    var sent = await TrySendOpenAsync(sink, state, ct);
+                    state.OpenSent = true;
+                    if (state.Log is not null)
+                    {
+                        state.Log.WriteLine($"[proxy] open notification sent: {sent ?? "(none — transparent pipe)"}");
+                        await state.Log.FlushAsync(ct);
+                    }
                 }
             }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+    }
+
+    // Returns 1 if `method` == "initialize", 2 if "initialized", 0 otherwise (including non-JSON).
+    // Allocation-free: uses Utf8JsonReader on the raw body and ValueTextEquals for the candidate strings.
+    internal static int PeekInitMethod(ReadOnlySpan<byte> body)
+    {
+        try
+        {
+            var reader = new Utf8JsonReader(body);
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
+            {
+                return 0;
+            }
+            while (reader.Read())
+            {
+                if (reader.TokenType == JsonTokenType.EndObject)
+                {
+                    return 0;
+                }
+                if (reader.TokenType == JsonTokenType.PropertyName && reader.ValueTextEquals("method"u8))
+                {
+                    if (!reader.Read() || reader.TokenType != JsonTokenType.String)
+                    {
+                        return 0;
+                    }
+                    if (reader.ValueTextEquals("initialize"u8))
+                    {
+                        return 1;
+                    }
+                    if (reader.ValueTextEquals("initialized"u8))
+                    {
+                        return 2;
+                    }
+                    return 0;
+                }
+                reader.Skip();
+            }
+            return 0;
+        }
+        catch
+        {
+            return 0;
         }
     }
 
@@ -355,39 +412,63 @@ internal static class Program
         return WriteFrameAsync(sink, body, ct);
     }
 
-    internal static async Task<byte[]?> ReadFrameAsync(Stream source, CancellationToken ct)
+    // Hot-path frame reader. The returned buffer is rented from ArrayPool<byte>.Shared
+    // and must be returned by the caller. Only [0, length) is valid content.
+    internal static async Task<(byte[] buffer, int length)?> ReadFramePooledAsync(Stream source, CancellationToken ct)
     {
+        // One byte[1] per FRAME (not per byte). LSP headers are short (~30 bytes),
+        // the cost of buffering more aggressively isn't worth the added complexity
+        // around carrying leftover bytes between frames.
+        var oneByte = new byte[1];
+        var lineBuf = new byte[64];
+        var lineLen = 0;
         var contentLength = -1;
-        var headerLine = new StringBuilder(64);
+
         while (true)
         {
-            var b = await ReadByteAsync(source, ct);
-            if (b < 0)
+            var n = await source.ReadAsync(oneByte.AsMemory(0, 1), ct);
+            if (n == 0)
             {
                 return null;
             }
-            if (b == '\r')
+            var b = oneByte[0];
+
+            if (b == (byte)'\r')
             {
-                var b2 = await ReadByteAsync(source, ct);
-                if (b2 != '\n')
+                n = await source.ReadAsync(oneByte.AsMemory(0, 1), ct);
+                if (n == 0)
                 {
-                    throw new InvalidDataException($"expected LF after CR, got {b2}");
+                    return null;
                 }
-                if (headerLine.Length == 0)
+                if (oneByte[0] != (byte)'\n')
+                {
+                    throw new InvalidDataException($"expected LF after CR, got {oneByte[0]}");
+                }
+                if (lineLen == 0)
                 {
                     break;
                 }
-                var line = headerLine.ToString();
-                headerLine.Clear();
-                const string clTag = "Content-Length:";
-                if (line.StartsWith(clTag, StringComparison.OrdinalIgnoreCase))
+                var line = lineBuf.AsSpan(0, lineLen);
+                ReadOnlySpan<byte> tag = "Content-Length:"u8;
+                if (line.Length > tag.Length && StartsWithCaseInsensitive(line, tag))
                 {
-                    contentLength = int.Parse(line.AsSpan(clTag.Length).Trim());
+                    var rest = TrimAscii(line.Slice(tag.Length));
+                    if (Utf8Parser.TryParse(rest, out int cl, out _))
+                    {
+                        contentLength = cl;
+                    }
                 }
+                lineLen = 0;
             }
             else
             {
-                headerLine.Append((char)b);
+                if (lineLen == lineBuf.Length)
+                {
+                    var bigger = new byte[lineBuf.Length * 2];
+                    lineBuf.AsSpan().CopyTo(bigger);
+                    lineBuf = bigger;
+                }
+                lineBuf[lineLen++] = b;
             }
         }
 
@@ -396,34 +477,113 @@ internal static class Program
             throw new InvalidDataException("missing Content-Length header");
         }
 
-        var body = new byte[contentLength];
+        var body = ArrayPool<byte>.Shared.Rent(contentLength);
         var read = 0;
         while (read < contentLength)
         {
-            var n = await source.ReadAsync(body.AsMemory(read, contentLength - read), ct);
-            if (n == 0)
+            var nb = await source.ReadAsync(body.AsMemory(read, contentLength - read), ct);
+            if (nb == 0)
             {
+                ArrayPool<byte>.Shared.Return(body);
                 return null;
             }
-            read += n;
+            read += nb;
         }
-        return body;
+        return (body, contentLength);
     }
 
-    internal static async ValueTask<int> ReadByteAsync(Stream s, CancellationToken ct)
+    // Convenience wrapper for tests / cold paths that want a byte[] of exact length.
+    // The pooled buffer is returned automatically; callers receive a fresh array.
+    internal static async Task<byte[]?> ReadFrameAsync(Stream source, CancellationToken ct)
     {
-        var one = new byte[1];
-        var n = await s.ReadAsync(one.AsMemory(0, 1), ct);
-        return n == 0 ? -1 : one[0];
+        var pooled = await ReadFramePooledAsync(source, ct);
+        if (pooled is null)
+        {
+            return null;
+        }
+        var (buf, len) = pooled.Value;
+        try
+        {
+            var copy = new byte[len];
+            buf.AsSpan(0, len).CopyTo(copy);
+            return copy;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buf);
+        }
     }
 
-    internal static async Task WriteFrameAsync(Stream sink, byte[] body, CancellationToken ct)
+    static bool StartsWithCaseInsensitive(ReadOnlySpan<byte> input, ReadOnlySpan<byte> prefix)
     {
-        var header = Encoding.UTF8.GetBytes($"Content-Length: {body.Length}\r\n\r\n");
-        await sink.WriteAsync(header, ct);
-        await sink.WriteAsync(body, ct);
-        await sink.FlushAsync(ct);
+        if (input.Length < prefix.Length)
+        {
+            return false;
+        }
+        for (var i = 0; i < prefix.Length; i++)
+        {
+            var a = input[i];
+            var p = prefix[i];
+            if (a >= (byte)'A' && a <= (byte)'Z')
+            {
+                a = (byte)(a + 32);
+            }
+            if (p >= (byte)'A' && p <= (byte)'Z')
+            {
+                p = (byte)(p + 32);
+            }
+            if (a != p)
+            {
+                return false;
+            }
+        }
+        return true;
     }
+
+    static ReadOnlySpan<byte> TrimAscii(ReadOnlySpan<byte> s)
+    {
+        var start = 0;
+        var end = s.Length;
+        while (start < end && (s[start] == (byte)' ' || s[start] == (byte)'\t'))
+        {
+            start++;
+        }
+        while (end > start && (s[end - 1] == (byte)' ' || s[end - 1] == (byte)'\t'))
+        {
+            end--;
+        }
+        return s.Slice(start, end - start);
+    }
+
+    internal static async Task WriteFrameAsync(Stream sink, ReadOnlyMemory<byte> body, CancellationToken ct)
+    {
+        // "Content-Length: " (16) + up to 10 digits + "\r\n\r\n" (4) — 32 is plenty.
+        var header = ArrayPool<byte>.Shared.Rent(32);
+        try
+        {
+            ReadOnlySpan<byte> prefix = "Content-Length: "u8;
+            prefix.CopyTo(header);
+            if (!Utf8Formatter.TryFormat(body.Length, header.AsSpan(prefix.Length), out var written))
+            {
+                throw new InvalidOperationException("failed to format Content-Length");
+            }
+            var p = prefix.Length + written;
+            header[p++] = (byte)'\r';
+            header[p++] = (byte)'\n';
+            header[p++] = (byte)'\r';
+            header[p++] = (byte)'\n';
+            await sink.WriteAsync(header.AsMemory(0, p), ct);
+            await sink.WriteAsync(body, ct);
+            await sink.FlushAsync(ct);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(header);
+        }
+    }
+
+    internal static Task WriteFrameAsync(Stream sink, byte[] body, CancellationToken ct)
+        => WriteFrameAsync(sink, body.AsMemory(), ct);
 
     internal static string PathToFileUri(string path)
     {
