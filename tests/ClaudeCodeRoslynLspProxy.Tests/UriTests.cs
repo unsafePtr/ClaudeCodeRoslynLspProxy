@@ -5,6 +5,10 @@ public class UriTests
     [Fact]
     public void PathToFileUri_WindowsAbsolute_AddsThreeSlashes()
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
         var uri = Program.PathToFileUri(@"C:\foo\bar.slnx");
         Assert.Equal("file:///C:/foo/bar.slnx", uri);
     }
@@ -12,8 +16,23 @@ public class UriTests
     [Fact]
     public void PathToFileUri_ForwardSlashes_NormalizesCorrectly()
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
         var uri = Program.PathToFileUri(@"C:/foo/bar.slnx");
         Assert.Equal("file:///C:/foo/bar.slnx", uri);
+    }
+
+    [Fact]
+    public void PathToFileUri_PosixAbsolute_AddsTwoSlashes()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        var uri = Program.PathToFileUri("/home/user/foo.slnx");
+        Assert.Equal("file:///home/user/foo.slnx", uri);
     }
 
     [Fact]
@@ -33,7 +52,9 @@ public class UriTests
     [Fact]
     public void PathThenUriThenPath_RoundTrip_PreservesFullPath()
     {
-        var original = @"C:\Projects\CompilerBrain\CompilerBrain.slnx";
+        var original = OperatingSystem.IsWindows()
+            ? @"C:\Projects\CompilerBrain\CompilerBrain.slnx"
+            : "/tmp/CompilerBrain/CompilerBrain.slnx";
         var uri = Program.PathToFileUri(original);
         var roundtripped = Program.FileUriToPath(uri);
         Assert.NotNull(roundtripped);
