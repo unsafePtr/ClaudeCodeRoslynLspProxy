@@ -4,8 +4,6 @@
 [![CI](https://github.com/unsafePtr/ClaudeCodeRoslynLspProxy/actions/workflows/ci.yml/badge.svg)](https://github.com/unsafePtr/ClaudeCodeRoslynLspProxy/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> 🤝 Built with the help of Claude — roughly 50% Claude's contribution, 50% vibe-coded.
-
 A thin LSP proxy that makes Microsoft's **Roslyn Language Server** (`Microsoft.CodeAnalysis.LanguageServer`) work as a solution-aware C# language server inside **Claude Code** by injecting the Roslyn-specific `solution/open` notification that Claude Code's built-in LSP client does not send.
 
 > ⚠️ **Claude Code's LSP tool is read-only / navigation-only.** It exposes 9 query operations (`findReferences`, `goToDefinition`, `goToImplementation`, `hover`, `documentSymbol`, `prepareCallHierarchy`, `incomingCalls`, `outgoingCalls`, `workspaceSymbol`) and does **not** expose edit operations like `rename`, `codeAction`, or `formatting` — even though `roslyn-language-server` implements them server-side. This proxy makes the read-only operations work solution-wide; it cannot add capabilities Claude Code does not surface.
@@ -112,7 +110,7 @@ Coverage: LSP framing, URI conversion, solution/project discovery, `initialize`-
 
 ## Acknowledgments
 
-- [Anthropic](https://www.anthropic.com/) — for [Claude Code](https://github.com/anthropics/claude-code) and the Claude model that wrote most of this codebase. See the credit blockquote at the top.
+- [Anthropic](https://www.anthropic.com/) — built with the help of [Claude Code](https://github.com/anthropics/claude-code); roughly 50% Claude's contribution, 50% vibe-coded.
 - [`dotnet/roslyn`](https://github.com/dotnet/roslyn) — the language server and protocol handlers this proxy wires up.
 - [`dotnet/vscode-csharp`](https://github.com/dotnet/vscode-csharp) — `roslynProtocol.ts` confirmed the `solution/open` / `project/open` wire format.
 - [`Piebald-AI/claude-code-lsps`](https://github.com/Piebald-AI/claude-code-lsps) — reference for the Claude Code LSP plugin manifest shape (`.lsp.json` schema).
