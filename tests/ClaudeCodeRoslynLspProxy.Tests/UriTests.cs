@@ -52,9 +52,7 @@ public class UriTests
     [Fact]
     public void PathThenUriThenPath_RoundTrip_PreservesFullPath()
     {
-        var original = OperatingSystem.IsWindows()
-            ? @"C:\Projects\CompilerBrain\CompilerBrain.slnx"
-            : "/tmp/CompilerBrain/CompilerBrain.slnx";
+        var original = Path.Combine(Path.GetTempPath(), "CompilerBrain", "CompilerBrain.slnx");
         var uri = Program.PathToFileUri(original);
         var roundtripped = Program.FileUriToPath(uri);
         Assert.NotNull(roundtripped);
