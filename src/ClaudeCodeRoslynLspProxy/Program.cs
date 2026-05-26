@@ -84,8 +84,11 @@ internal static class Program
         logPath ??= DefaultLogPath();
 
         await using var log = OpenLog(logPath);
-        log?.WriteLine($"[proxy] start server={serverPath} args=[{string.Join(' ', serverArgs)}]");
-        await (log?.FlushAsync() ?? Task.CompletedTask);
+        if (log is not null)
+        {
+            await log.WriteLineAsync($"[proxy] start server={serverPath} args=[{string.Join(' ', serverArgs)}]");
+            await log.FlushAsync();
+        }
 
         var psi = new ProcessStartInfo
         {
@@ -168,9 +171,9 @@ internal static class Program
                 {
                     while (LspFraming.TryReadFrame(ref buffer, out var frame))
                     {
-                        var methodKind = isClientToServer ? PeekInitMethod(frame) : 0;
+                        var methodKind = isClientToServer ? PeekInitMethod(frame) : InitMethodKind.Other;
 
-                        if (methodKind == 1)
+                        if (methodKind == InitMethodKind.Initialize)
                         {
                             // Once-per-session full parse to extract workspaceFolders / rootUri.
                             JsonObject? message = null;
@@ -185,20 +188,20 @@ internal static class Program
                             }
                             if (message is not null)
                             {
-                                InspectClientToServer(message, state);
+                                await InspectClientToServer(message, state);
                             }
                         }
 
                         await LspFraming.WriteFrameAsync(writer, frame, ct);
 
-                        if (methodKind == 2 && !state.OpenSent)
+                        if (methodKind == InitMethodKind.Initialized && !state.OpenSent)
                         {
                             using var writerAsStream = writer.AsStream(leaveOpen: true);
                             var sent = await TrySendOpenAsync(writerAsStream, state, ct);
                             state.OpenSent = true;
                             if (state.Log is not null)
                             {
-                                state.Log.WriteLine($"[proxy] open notification sent: {sent ?? "(none — transparent pipe)"}");
+                                await state.Log.WriteLineAsync($"[proxy] open notification sent: {sent ?? "(none — transparent pipe)"}");
                                 await state.Log.FlushAsync(ct);
                             }
                         }
@@ -229,9 +232,15 @@ internal static class Program
         }
     }
 
-    // Returns 1 if `method` == "initialize", 2 if "initialized", 0 otherwise (including non-JSON).
     // Allocation-free: uses Utf8JsonReader on the raw body and ValueTextEquals for the candidate strings.
-    internal static int PeekInitMethod(ReadOnlySpan<byte> body)
+    internal enum InitMethodKind
+    {
+        Other = 0,
+        Initialize = 1,
+        Initialized = 2,
+    }
+
+    internal static InitMethodKind PeekInitMethod(ReadOnlySpan<byte> body)
     {
         try
         {
@@ -240,13 +249,13 @@ internal static class Program
         }
         catch
         {
-            return 0;
+            return InitMethodKind.Other;
         }
     }
 
     // Sequence overload — Utf8JsonReader has a sequence-aware constructor that walks
     // multi-segment buffers without copying.
-    internal static int PeekInitMethod(ReadOnlySequence<byte> body)
+    internal static InitMethodKind PeekInitMethod(ReadOnlySequence<byte> body)
     {
         try
         {
@@ -255,44 +264,44 @@ internal static class Program
         }
         catch
         {
-            return 0;
+            return InitMethodKind.Other;
         }
     }
 
-    static int PeekInitMethodCore(ref Utf8JsonReader reader)
+    static InitMethodKind PeekInitMethodCore(ref Utf8JsonReader reader)
     {
         if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
         {
-            return 0;
+            return InitMethodKind.Other;
         }
         while (reader.Read())
         {
             if (reader.TokenType == JsonTokenType.EndObject)
             {
-                return 0;
+                return InitMethodKind.Other;
             }
             if (reader.TokenType == JsonTokenType.PropertyName && reader.ValueTextEquals("method"u8))
             {
                 if (!reader.Read() || reader.TokenType != JsonTokenType.String)
                 {
-                    return 0;
+                    return InitMethodKind.Other;
                 }
                 if (reader.ValueTextEquals("initialize"u8))
                 {
-                    return 1;
+                    return InitMethodKind.Initialize;
                 }
                 if (reader.ValueTextEquals("initialized"u8))
                 {
-                    return 2;
+                    return InitMethodKind.Initialized;
                 }
-                return 0;
+                return InitMethodKind.Other;
             }
             reader.Skip();
         }
-        return 0;
+        return InitMethodKind.Other;
     }
 
-    internal static void InspectClientToServer(JsonObject message, ProxyState state)
+    internal static async ValueTask InspectClientToServer(JsonObject message, ProxyState state)
     {
         var method = message["method"]?.GetValue<string>();
         if (method != "initialize")
@@ -327,7 +336,10 @@ internal static class Program
             }
         }
 
-        state.Log?.WriteLine($"[proxy] workspace folders: {string.Join(", ", state.WorkspaceFolderUris)}");
+        if (state.Log is not null)
+        {
+            await state.Log.WriteLineAsync($"[proxy] workspace folders: {string.Join(", ", state.WorkspaceFolderUris)}");
+        }
     }
 
     internal static async ValueTask<string?> TrySendOpenAsync(Stream sink, ProxyState state, CancellationToken ct)

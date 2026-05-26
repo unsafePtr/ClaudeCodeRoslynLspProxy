@@ -3,7 +3,7 @@ namespace ClaudeCodeRoslynLspProxy.Tests;
 public class InspectionTests
 {
     [Fact]
-    public void NonInitializeMethod_DoesNothing()
+    public async Task NonInitializeMethod_DoesNothing()
     {
         var msg = new JsonObject
         {
@@ -11,13 +11,13 @@ public class InspectionTests
         };
         var state = new Program.ProxyState();
 
-        Program.InspectClientToServer(msg, state);
+        await Program.InspectClientToServer(msg, state);
 
         Assert.Empty(state.WorkspaceFolderUris);
     }
 
     [Fact]
-    public void Initialize_WithWorkspaceFolders_CapturesAllUris()
+    public async Task Initialize_WithWorkspaceFolders_CapturesAllUris()
     {
         var msg = new JsonObject
         {
@@ -33,7 +33,7 @@ public class InspectionTests
         };
         var state = new Program.ProxyState();
 
-        Program.InspectClientToServer(msg, state);
+        await Program.InspectClientToServer(msg, state);
 
         Assert.Equal(2, state.WorkspaceFolderUris.Count);
         Assert.Contains("file:///C:/A", state.WorkspaceFolderUris);
@@ -41,7 +41,7 @@ public class InspectionTests
     }
 
     [Fact]
-    public void Initialize_OnlyRootUri_FallsBackToRootUri()
+    public async Task Initialize_OnlyRootUri_FallsBackToRootUri()
     {
         var msg = new JsonObject
         {
@@ -53,14 +53,14 @@ public class InspectionTests
         };
         var state = new Program.ProxyState();
 
-        Program.InspectClientToServer(msg, state);
+        await Program.InspectClientToServer(msg, state);
 
         Assert.Single(state.WorkspaceFolderUris);
         Assert.Equal("file:///C:/Foo", state.WorkspaceFolderUris[0]);
     }
 
     [Fact]
-    public void Initialize_WorkspaceFoldersAndRootUri_PrefersWorkspaceFolders()
+    public async Task Initialize_WorkspaceFoldersAndRootUri_PrefersWorkspaceFolders()
     {
         var msg = new JsonObject
         {
@@ -76,14 +76,14 @@ public class InspectionTests
         };
         var state = new Program.ProxyState();
 
-        Program.InspectClientToServer(msg, state);
+        await Program.InspectClientToServer(msg, state);
 
         Assert.Single(state.WorkspaceFolderUris);
         Assert.Equal("file:///C:/WorkspaceFolder", state.WorkspaceFolderUris[0]);
     }
 
     [Fact]
-    public void Initialize_EmptyParams_LeavesStateClean()
+    public async Task Initialize_EmptyParams_LeavesStateClean()
     {
         var msg = new JsonObject
         {
@@ -91,7 +91,7 @@ public class InspectionTests
         };
         var state = new Program.ProxyState();
 
-        Program.InspectClientToServer(msg, state);
+        await Program.InspectClientToServer(msg, state);
 
         Assert.Empty(state.WorkspaceFolderUris);
     }
