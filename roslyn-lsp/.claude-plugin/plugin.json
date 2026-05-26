@@ -15,7 +15,7 @@
     "log_level": {
       "type": "string",
       "title": "Roslyn log level",
-      "description": "Forwarded to Microsoft.CodeAnalysis.LanguageServer as --logLevel. Allowed: Trace | Debug | Information | Warning | Error | Critical.",
+      "description": "Forwarded to Microsoft.CodeAnalysis.LanguageServer as --logLevel. Allowed: Trace | Debug | Information | Warning | Error | Critical. Defaults to 'Information'.",
       "default": "Information"
     }
   }
