@@ -109,10 +109,10 @@ Add `ENABLE_LSP_TOOL=1` to your `~/.claude/settings.json` `env` block (merging w
 
 ```pwsh
 claude plugin marketplace add unsafePtr/ClaudeCodeRoslynLspProxy
-claude plugin install roslyn-lsp@claudecoderoslynlspproxy
+claude plugin install roslyn-lsp@claude-roslyn-lsp
 ```
 
-Restart Claude Code. Verify with `claude plugin list` — `roslyn-lsp@claudecoderoslynlspproxy` should be enabled.
+Restart Claude Code. Verify with `claude plugin list` — `roslyn-lsp@claude-roslyn-lsp` should be enabled.
 
 At enable time the plugin will prompt for two user-config values (both have sensible defaults — just accept them unless you want to change):
 
@@ -162,7 +162,7 @@ To work on the plugin manifests locally without going through NuGet, install the
 
 ```pwsh
 claude plugin marketplace add C:/path/to/ClaudeCodeRoslynLspProxy
-claude plugin install roslyn-lsp@claudecoderoslynlspproxy
+claude plugin install roslyn-lsp@claude-roslyn-lsp
 ```
 
 ## Troubleshooting

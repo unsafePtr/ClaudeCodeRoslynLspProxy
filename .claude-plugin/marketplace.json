@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "claudecoderoslynlspproxy",
+  "name": "claude-roslyn-lsp",
   "version": "0.1.0",
   "description": "Roslyn LSP for Claude Code with solution/open injection",
   "owner": { "name": "unsafePtr" },
