@@ -21,15 +21,74 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Pack
+      - name: Verify tag matches csproj <Version>
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          TAG_VERSION="${TAG#v}"
+          CSPROJ_VERSION=$(grep -oP '(?<=<Version>)[^<]+' src/ClaudeCodeRoslynLspProxy/ClaudeCodeRoslynLspProxy.csproj)
+          echo "tag=$TAG_VERSION csproj=$CSPROJ_VERSION"
+          if [ "$TAG_VERSION" != "$CSPROJ_VERSION" ]; then
+            echo "FAIL: tag v$TAG_VERSION does not match csproj <Version>$CSPROJ_VERSION</Version>"
+            exit 1
+          fi
+
+      - name: Restore + Build + Test (defence-in-depth before publish)
+        run: |
+          dotnet restore ClaudeCodeRoslynLspProxy.slnx
+          dotnet build ClaudeCodeRoslynLspProxy.slnx -c Release --no-restore
+          dotnet run --project tests/ClaudeCodeRoslynLspProxy.Tests/ClaudeCodeRoslynLspProxy.Tests.csproj -c Release --no-build
+
+      - name: Integration smoke against real roslyn-language-server
+        run: |
+          set -euo pipefail
+          dotnet tool install --global roslyn-language-server --prerelease
+          dotnet pack src/ClaudeCodeRoslynLspProxy/ClaudeCodeRoslynLspProxy.csproj -c Release --no-build -o ./artifacts
+          dotnet tool install --global --add-source ./artifacts ClaudeCodeRoslynLspProxy
+          export PATH="$PATH:$HOME/.dotnet/tools"
+
+          WS=$(mktemp -d)
+          cat > "$WS/Test.slnx" <<'EOF'
+          <Solution><Project Path="Test.csproj" /></Solution>
+          EOF
+          cat > "$WS/Test.csproj" <<'EOF'
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>
+          EOF
+          echo "public class Probe { public void Bar() {} }" > "$WS/Probe.cs"
+
+          python3 - "file://$WS" > /tmp/lsp-input.bin <<'PYEOF'
+          import json, sys
+          ws = sys.argv[1]
+          def frame(o):
+              body = json.dumps(o).encode()
+              return f"Content-Length: {len(body)}\r\n\r\n".encode() + body
+          sys.stdout.buffer.write(frame({"jsonrpc":"2.0","id":1,"method":"initialize",
+              "params":{"processId":None,"rootUri":ws,
+                        "workspaceFolders":[{"uri":ws,"name":"test"}],"capabilities":{}}}))
+          sys.stdout.buffer.write(frame({"jsonrpc":"2.0","method":"initialized","params":{}}))
+          PYEOF
+
+          LOG=/tmp/proxy-release.log
+          timeout 25 ClaudeCodeRoslynLspProxy --server roslyn-language-server --log "$LOG" \
+            -- --stdio --logLevel Information < /tmp/lsp-input.bin > /dev/null 2>&1 || true
+
+          if ! grep -q "solution/open" "$LOG"; then
+            echo "FAIL: release-time integration smoke did not see solution/open."
+            cat "$LOG" || true
+            exit 1
+          fi
+
+      - name: Repack with tag version
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          rm -rf ./artifacts
           dotnet pack src/ClaudeCodeRoslynLspProxy/ClaudeCodeRoslynLspProxy.csproj \
             -c Release -p:Version="$VERSION" -o ./artifacts
 
       # NuGet Trusted Publishing — configure once at nuget.org under the package's
       # "Trusted Publishing" tab, then no API key is needed. Until then this step
-      # will fail; you can fall back to a NUGET_API_KEY secret meanwhile.
+      # will fail and the push step below will be skipped; you can fall back to a
+      # NUGET_API_KEY secret meanwhile.
       - name: Login to NuGet (trusted publishing)
         uses: NuGet/login@v1
         id: login

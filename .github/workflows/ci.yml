@@ -87,3 +87,83 @@ jobs:
           if missing:
               sys.exit(f"roslyn-lsp/.lsp.json csharp block missing required keys: {missing}")
           EOF
+
+  real-roslyn-integration:
+    name: integration test with real Roslyn LSP
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build + pack the proxy
+        run: |
+          dotnet build src/ClaudeCodeRoslynLspProxy/ClaudeCodeRoslynLspProxy.csproj -c Release
+          dotnet pack src/ClaudeCodeRoslynLspProxy/ClaudeCodeRoslynLspProxy.csproj -c Release --no-build -o ./artifacts
+
+      - name: Install both dotnet tools globally
+        run: |
+          dotnet tool install --global --add-source ./artifacts ClaudeCodeRoslynLspProxy
+          dotnet tool install --global roslyn-language-server --prerelease
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Drive a real LSP handshake through proxy → Roslyn
+        run: |
+          set -euo pipefail
+          WS=$(mktemp -d)
+          cat > "$WS/Test.slnx" <<EOF
+          <Solution>
+            <Project Path="Test.csproj" />
+          </Solution>
+          EOF
+          cat > "$WS/Test.csproj" <<EOF
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <TargetFramework>net10.0</TargetFramework>
+            </PropertyGroup>
+          </Project>
+          EOF
+          echo "public class IntegrationProbe { public void HelloFromCi() {} }" > "$WS/Probe.cs"
+
+          WS_URI="file://$WS"
+          LOG=/tmp/proxy-integration.log
+
+          # Build canned LSP input: initialize + initialized.
+          python3 - "$WS_URI" > /tmp/lsp-input.bin <<'PYEOF'
+          import json, sys
+          ws = sys.argv[1]
+          def frame(o):
+              body = json.dumps(o).encode()
+              return f"Content-Length: {len(body)}\r\n\r\n".encode() + body
+          sys.stdout.buffer.write(frame({
+              "jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"processId": None, "rootUri": ws,
+                         "workspaceFolders": [{"uri": ws, "name": "test"}],
+                         "capabilities": {}}
+          }))
+          sys.stdout.buffer.write(frame({
+              "jsonrpc": "2.0", "method": "initialized", "params": {}
+          }))
+          PYEOF
+
+          # Give the proxy 25 s to receive the handshake, inject solution/open,
+          # and have Roslyn start the load. We don't need indexing to complete
+          # for this assertion — only that solution/open hit the wire.
+          timeout 25 ClaudeCodeRoslynLspProxy \
+            --server roslyn-language-server \
+            --log "$LOG" \
+            -- --stdio --logLevel Information < /tmp/lsp-input.bin > /tmp/proxy-stdout.bin 2> /tmp/proxy-stderr.log || true
+
+          echo "--- proxy.log ---"
+          cat "$LOG" || true
+          echo "--- proxy stderr (first 80 lines) ---"
+          head -80 /tmp/proxy-stderr.log || true
+
+          if ! grep -q "solution/open" "$LOG"; then
+            echo "FAIL: proxy log did not report solution/open injection"
+            exit 1
+          fi
+          echo "PASS: proxy injected solution/open into the real Roslyn LSP."
