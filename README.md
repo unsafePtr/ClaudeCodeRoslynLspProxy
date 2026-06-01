@@ -91,9 +91,14 @@ In a C# project ask Claude to "find references to X". Then:
 ```pwsh
 # Windows
 Get-Content $env:TEMP\roslyn-lsp-logs\proxy.log -Tail 5
-# Linux / macOS
+# Linux
 tail -5 /tmp/roslyn-lsp-logs/proxy.log
+# macOS — Path.GetTempPath() resolves to $TMPDIR (/var/folders/.../T/), not /tmp
+tail -5 "${TMPDIR:-/tmp}/roslyn-lsp-logs/proxy.log"
 ```
+
+The log directory is wherever .NET's `Path.GetTempPath()` resolves on the host:
+`%TEMP%` on Windows, `/tmp` on Linux, `$TMPDIR` on macOS.
 
 Expected last line: `[proxy] open notification sent: solution/open (file:///.../YourSolution.slnx)`. First call after a cold start takes 10–30 s while Roslyn indexes; subsequent calls are sub-second.
 
